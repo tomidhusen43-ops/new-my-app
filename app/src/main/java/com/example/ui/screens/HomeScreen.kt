@@ -30,15 +30,16 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material.icons.filled.CropRotate
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Style
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -67,7 +68,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -97,7 +97,7 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
-    onNavigateToResult: (Bitmap, Bitmap, CardAnalysis) -> Unit,
+    onNavigateToResult: (source: Bitmap, reconstructed: Bitmap, template: Bitmap?, extractedForeground: Bitmap?, analysis: CardAnalysis) -> Unit,
     onNavigateToCornerEditor: (Bitmap, CardCorners) -> Unit,
     onNavigateToBatch: () -> Unit,
     onOpenPinSetup: () -> Unit,
@@ -106,78 +106,140 @@ fun HomeScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
-    var preparedImage by remember { mutableStateOf<CardProcessingEngine.PreparedImage?>(null) }
+    // Slot 1: Main Source Card (Contains text, names, numbers, photos, logos)
+    var sourceImagePrepared by remember { mutableStateOf<CardProcessingEngine.PreparedImage?>(null) }
+
+    // Slot 2: Target Blank Template Card (Clean background design without text/photos)
+    var templateImagePrepared by remember { mutableStateOf<CardProcessingEngine.PreparedImage?>(null) }
+    var useDefaultBlankTemplate by remember { mutableStateOf(false) }
+
     var isProcessing by remember { mutableStateOf(false) }
     var currentStepMessage by remember { mutableStateOf("") }
     var showSecurityDialog by remember { mutableStateOf(false) }
 
-    fun processLoadedUri(uri: Uri) {
-        selectedImageUri = uri
-        coroutineScope.launch {
-            try {
-                val prep = CardProcessingEngine.prepareImage(context, uri)
-                preparedImage = prep
-                Toast.makeText(context, "ছবি সফলভাবে লোড হয়েছে!", Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                Toast.makeText(
-                    context,
-                    "ছবি লোড করতে সমস্যা হয়েছে: ${e.localizedMessage}",
-                    Toast.LENGTH_LONG
-                ).show()
+    // Launchers for Slot 1 (Source Main Card)
+    val sourcePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            coroutineScope.launch {
+                try {
+                    val prep = CardProcessingEngine.prepareImage(context, uri)
+                    sourceImagePrepared = prep
+                    Toast.makeText(context, "১ম কার্ড সফলভাবে লোড হয়েছে!", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Toast.makeText(context, "১ম কার্ড লোড ব্যর্থ: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                }
             }
         }
     }
 
-    // Modern Photo Picker contract
-    val photoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            processLoadedUri(uri)
-        }
-    }
-
-    // Fallback Content Picker
-    val fallbackPickerLauncher = rememberLauncherForActivityResult(
+    val sourceFallbackLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
-            processLoadedUri(uri)
+            coroutineScope.launch {
+                try {
+                    val prep = CardProcessingEngine.prepareImage(context, uri)
+                    sourceImagePrepared = prep
+                    Toast.makeText(context, "১ম কার্ড সফলভাবে লোড হয়েছে!", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Toast.makeText(context, "১ম কার্ড লোড ব্যর্থ: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                }
+            }
         }
     }
 
-    fun openImagePicker() {
+    // Launchers for Slot 2 (Target Blank Template Card)
+    val templatePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            coroutineScope.launch {
+                try {
+                    val prep = CardProcessingEngine.prepareImage(context, uri)
+                    templateImagePrepared = prep
+                    useDefaultBlankTemplate = false
+                    Toast.makeText(context, "২য় ব্ল্যাঙ্ক ডিজাইন লোড হয়েছে!", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Toast.makeText(context, "২য় ডিজাইন লোড ব্যর্থ: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    val templateFallbackLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            coroutineScope.launch {
+                try {
+                    val prep = CardProcessingEngine.prepareImage(context, uri)
+                    templateImagePrepared = prep
+                    useDefaultBlankTemplate = false
+                    Toast.makeText(context, "২য় ব্ল্যাঙ্ক ডিজাইন লোড হয়েছে!", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Toast.makeText(context, "২য় ডিজাইন লোড ব্যর্থ: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    fun openSourcePicker() {
         try {
-            photoPickerLauncher.launch(
-                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-            )
+            sourcePickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
         } catch (_: Exception) {
-            fallbackPickerLauncher.launch("image/*")
+            sourceFallbackLauncher.launch("image/*")
         }
     }
 
-    fun startReconstruction() {
-        val prep = preparedImage ?: return
+    fun openTemplatePicker() {
+        try {
+            templatePickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+        } catch (_: Exception) {
+            templateFallbackLauncher.launch("image/*")
+        }
+    }
+
+    fun startProcessing() {
+        val sourcePrep = sourceImagePrepared ?: run {
+            Toast.makeText(context, "দয়া করে ১ম মেইন কার্ড আপলোড করুন!", Toast.LENGTH_SHORT).show()
+            return
+        }
+
         isProcessing = true
         coroutineScope.launch {
             try {
-                currentStepMessage = "পারসপেক্টিভ ও ছবি বিন্যাস বিশ্লেষণ..."
-                delay(300)
+                currentStepMessage = "১ম কার্ড থেকে সব টেক্সট, নাম, নম্বর ও ফটো আলাদা করা হচ্ছে..."
+                delay(350)
 
-                currentStepMessage = "১০০% হুবহু উপাদান ও আল্ট্রা-এইচডি এনহ্যান্সমেন্ট..."
+                currentStepMessage = "২য় ব্ল্যাঙ্ক কার্ডের সাথে নিখুঁতভাবে কম্পোজিট ও অ্যালাইন করা হচ্ছে..."
                 delay(400)
 
-                val (analysis, reconstructed) = CardProcessingEngine.processCardPipeline(
-                    prepared = prep,
+                val targetTemplateBitmap = templateImagePrepared?.bitmap ?: if (useDefaultBlankTemplate) {
+                    CardProcessingEngine.createDefaultBlankTemplate(
+                        width = sourcePrep.bitmap.width,
+                        height = sourcePrep.bitmap.height
+                    )
+                } else null
+
+                val (analysis, reconstructed, extractedFg) = CardProcessingEngine.processDualCardPipeline(
+                    sourcePrepared = sourcePrep,
+                    templateBitmap = targetTemplateBitmap,
                     manualCorners = manualCorners
                 )
 
-                currentStepMessage = "রিকনস্ট্রাকশন ও ভ্যালিডেশন সম্পন্ন!"
+                currentStepMessage = "সফলভাবে সম্পন্ন হয়েছে!"
                 delay(200)
 
                 isProcessing = false
-                onNavigateToResult(prep.bitmap, reconstructed, analysis)
+                onNavigateToResult(
+                    sourcePrep.bitmap,
+                    reconstructed,
+                    targetTemplateBitmap,
+                    extractedFg,
+                    analysis
+                )
             } catch (e: Exception) {
                 isProcessing = false
                 Toast.makeText(context, "প্রসেসিং ব্যর্থ হয়েছে: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
@@ -201,11 +263,7 @@ fun HomeScreen(
                             modifier = Modifier
                                 .size(36.dp)
                                 .clip(RoundedCornerShape(10.dp))
-                                .background(
-                                    Brush.linearGradient(
-                                        listOf(AccentPrimary, AccentCyan)
-                                    )
-                                ),
+                                .background(Brush.linearGradient(listOf(AccentPrimary, AccentCyan))),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
@@ -223,7 +281,7 @@ fun HomeScreen(
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "হুবহু কার্ড ও ছবি রিকনস্ট্রাক্টর",
+                                text = "ডুয়াল-কার্ড ডিজাইন ও টেক্সট ট্রান্সফার",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TextSecondary,
                                 fontSize = 11.sp
@@ -232,7 +290,6 @@ fun HomeScreen(
                     }
                 },
                 actions = {
-                    // Security & Privacy Shield button
                     IconButton(
                         onClick = { showSecurityDialog = true },
                         modifier = Modifier.testTag("home_security_button")
@@ -245,7 +302,6 @@ fun HomeScreen(
                         )
                     }
 
-                    // Batch mode
                     IconButton(
                         onClick = onNavigateToBatch,
                         modifier = Modifier.testTag("home_batch_button")
@@ -257,9 +313,7 @@ fun HomeScreen(
                         )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = DarkSurface
-                )
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkSurface)
             )
         }
     ) { innerPadding ->
@@ -272,175 +326,118 @@ fun HomeScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Security Badge Banner
-            Surface(
-                color = DarkSurface,
-                shape = RoundedCornerShape(14.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, DarkBorder),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Shield,
-                        contentDescription = null,
-                        tint = AccentGreen,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "১০০% সুরক্ষিত ও অন-ডিভাইস প্রসেসিং • পিন লক সুবিধা অন্তর্ভুক্ত",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary,
-                        fontSize = 11.sp
-                    )
-                }
-            }
-
-            // Welcome Description Card
+            // Instructions Banner
             Card(
                 colors = CardDefaults.cardColors(containerColor = DarkSurface),
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "১০০% হুবহু কার্ড ও ছবি ক্লোনিং",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = AccentCyan
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Layers, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "ডুয়াল-আপলোড কার্ড রিকনস্ট্রাকশন",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = AccentCyan
+                        )
+                    }
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "যেকোনো দোকান, ব্যবসা, আইডি কার্ড বা ডকুমেন্টের ছবি দিন। মূল ডিজাইন, লেখা, লোগো, রঙ ও ব্যাকগ্রাউন্ড ১০০% হুবহু অক্ষত রেখে আল্ট্রা-এইচডি কোয়ালিটিতে রিকনস্ট্রাক্ট করা হবে।",
-                        style = MaterialTheme.typography.bodyMedium,
+                        text = "১ম বক্সে মেইন কার্ড দিন (যেখান থেকে নাম, লেখা, লোগো ও ছবি নেওয়া হবে) এবং ২য় বক্সে নতুন ব্ল্যাঙ্ক কার্ড বা ব্যাকগ্রাউন্ড দিন। AI ১ম কার্ডের সব উপাদান ২য় কার্ডে নিখুঁতভাবে বসিয়ে দেবে!",
+                        style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary,
-                        lineHeight = 20.sp
+                        lineHeight = 18.sp
                     )
                 }
             }
 
-            // Hero Card Upload / Preview Container
-            val currentPrepared = preparedImage
-            if (currentPrepared == null) {
-                // Empty state upload box
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                    shape = RoundedCornerShape(20.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .border(
-                            width = 1.5.dp,
-                            color = DarkBorder,
-                            shape = RoundedCornerShape(20.dp)
-                        )
-                        .clickable { openImagePicker() }
-                        .testTag("card_picker_container")
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 36.dp, horizontal = 20.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
+            // ==========================================
+            // SLOT 1: MAIN CARD (Contains text & photos)
+            // ==========================================
+            Card(
+                colors = CardDefaults.cardColors(containerColor = DarkSurface),
+                shape = RoundedCornerShape(18.dp),
+                border = androidx.compose.foundation.BorderStroke(1.5.dp, if (sourceImagePrepared != null) AccentCyan else DarkBorder),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(72.dp)
-                                .clip(CircleShape)
-                                .background(DarkSurfaceVariant),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.AddPhotoAlternate,
-                                contentDescription = "Add Card",
-                                tint = AccentPrimary,
-                                modifier = Modifier.size(36.dp)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        Text(
-                            text = "যেকোনো কার্ড বা ছবির ফাইল দিন",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = TextPrimary
-                        )
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        Text(
-                            text = "Gallery বা ফাইলস থেকে যেকোনো ছবি নির্বাচন করুন",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary,
-                            textAlign = TextAlign.Center
-                        )
-
-                        Spacer(modifier = Modifier.height(18.dp))
-
-                        Button(
-                            onClick = { openImagePicker() },
-                            colors = ButtonDefaults.buttonColors(containerColor = AccentPrimary),
-                            modifier = Modifier.testTag("upload_card_button")
-                        ) {
-                            Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("ছবি নির্বাচন করুন")
-                        }
-                    }
-                }
-            } else {
-                // Card has been selected, preview with controls
-                val bmp = currentPrepared.bitmap
-                val imageBitmap = remember(bmp) { bmp.asImageBitmap() }
-
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                    shape = RoundedCornerShape(20.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "নির্বাচিত ছবির প্রিভিউ",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = TextPrimary
-                            )
-                            Surface(
-                                color = DarkSurfaceVariant,
-                                shape = RoundedCornerShape(8.dp)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .clip(CircleShape)
+                                    .background(AccentPrimary.copy(alpha = 0.2f)),
+                                contentAlignment = Alignment.Center
                             ) {
+                                Text("১", color = AccentPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
                                 Text(
-                                    text = "${currentPrepared.processingWidth} × ${currentPrepared.processingHeight} px",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = AccentCyan,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    text = "মূল কার্ড (Main Card)",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TextPrimary
+                                )
+                                Text(
+                                    text = "যে কার্ডের টেক্সট, নাম, নম্বর ও ছবি নিতে চান",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TextMuted,
+                                    fontSize = 11.sp
                                 )
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        if (sourceImagePrepared != null) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = AccentGreen, modifier = Modifier.size(20.dp))
+                        }
+                    }
 
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    val src = sourceImagePrepared
+                    if (src == null) {
+                        // Upload Box for Slot 1
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(DarkSurfaceVariant)
+                                .border(1.dp, DarkBorder, RoundedCornerShape(12.dp))
+                                .clickable { openSourcePicker() }
+                                .padding(vertical = 24.dp, horizontal = 16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, tint = AccentPrimary, modifier = Modifier.size(36.dp))
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("১ম কার্ডের ছবি নির্বাচন করুন", fontWeight = FontWeight.SemiBold, color = TextPrimary, fontSize = 14.sp)
+                                Text("গ্যালারি থেকে মূল কার্ড নির্বাচন করুন", color = TextSecondary, fontSize = 11.sp)
+                            }
+                        }
+                    } else {
+                        // Preview for Slot 1
+                        val bmp = src.bitmap
+                        val imageBitmap = remember(bmp) { bmp.asImageBitmap() }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
                                 .background(Color.Black)
-                                .border(1.dp, DarkBorder, RoundedCornerShape(14.dp)),
+                                .border(1.dp, DarkBorder, RoundedCornerShape(12.dp)),
                             contentAlignment = Alignment.Center
                         ) {
                             val aspect = bmp.width.toFloat() / bmp.height.toFloat()
                             Image(
                                 bitmap = imageBitmap,
-                                contentDescription = "Selected Card Preview",
+                                contentDescription = "Source Card",
                                 contentScale = ContentScale.Fit,
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -448,72 +445,173 @@ fun HomeScreen(
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(14.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
-                        // Actions for selected card
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             OutlinedButton(
-                                onClick = { openImagePicker() },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("change_card_button")
+                                onClick = { openSourcePicker() },
+                                modifier = Modifier.weight(1f)
                             ) {
                                 Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("পরিবর্তন")
+                                Text("পরিবর্তন", fontSize = 12.sp)
                             }
 
                             FilledTonalButton(
                                 onClick = { onNavigateToCornerEditor(bmp, manualCorners ?: CardCorners()) },
-                                modifier = Modifier
-                                    .weight(1.3f)
-                                    .testTag("adjust_corners_button")
+                                modifier = Modifier.weight(1.3f)
                             ) {
                                 Icon(Icons.Default.CropRotate, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("কোণ অ্যাডজাস্ট")
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        Button(
-                            onClick = { startReconstruction() },
-                            enabled = !isProcessing,
-                            colors = ButtonDefaults.buttonColors(containerColor = AccentPrimary),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(50.dp)
-                                .testTag("start_reconstruction_button")
-                        ) {
-                            if (isProcessing) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(20.dp),
-                                    strokeWidth = 2.5.dp,
-                                    color = Color.White
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Text(
-                                    text = "হুবহু রিকনস্ট্রাকশন হচ্ছে...",
-                                    fontWeight = FontWeight.Bold
-                                )
-                            } else {
-                                Icon(Icons.Default.PlayArrow, contentDescription = null)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = "হুবহু আল্ট্রা-এইচডি ক্লোন শুরু করুন",
-                                    fontWeight = FontWeight.Bold
-                                )
+                                Text("কোণ ক্রপ / সোজা", fontSize = 12.sp)
                             }
                         }
                     }
                 }
             }
 
-            // Processing feedback state
+            // ====================================================
+            // SLOT 2: TARGET BLANK TEMPLATE (Design background)
+            // ====================================================
+            Card(
+                colors = CardDefaults.cardColors(containerColor = DarkSurface),
+                shape = RoundedCornerShape(18.dp),
+                border = androidx.compose.foundation.BorderStroke(1.5.dp, if (templateImagePrepared != null || useDefaultBlankTemplate) AccentCyan else DarkBorder),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .clip(CircleShape)
+                                    .background(AccentCyan.copy(alpha = 0.2f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("২", color = AccentCyan, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = "নতুন ব্ল্যাঙ্ক কার্ড বা ব্যাকগ্রাউন্ড",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TextPrimary
+                                )
+                                Text(
+                                    text = "যে কার্ডে লেখা ও ছবি নেই, কেবল ফাঁকা ডিজাইন",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TextMuted,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+
+                        if (templateImagePrepared != null || useDefaultBlankTemplate) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = AccentGreen, modifier = Modifier.size(20.dp))
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    val tmpl = templateImagePrepared
+                    if (tmpl == null && !useDefaultBlankTemplate) {
+                        // Upload Box for Slot 2
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(DarkSurfaceVariant)
+                                .border(1.dp, DarkBorder, RoundedCornerShape(12.dp))
+                                .clickable { openTemplatePicker() }
+                                .padding(vertical = 24.dp, horizontal = 16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(Icons.Default.Style, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(36.dp))
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("২য় ব্ল্যাঙ্ক ডিজাইন ছবি নির্বাচন করুন", fontWeight = FontWeight.SemiBold, color = TextPrimary, fontSize = 14.sp)
+                                Text("গ্যালারি থেকে ফাঁকা কার্ড সিলেক্ট করুন", color = TextSecondary, fontSize = 11.sp)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Quick Button for White Card
+                        OutlinedButton(
+                            onClick = {
+                                useDefaultBlankTemplate = true
+                                templateImagePrepared = null
+                                Toast.makeText(context, "ডিফল্ট ক্লিন হোয়াইট কার্ড নির্বাচিত!", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("বা সাদা ব্ল্যাঙ্ক কার্ড ব্যবহার করুন", fontSize = 12.sp, color = TextSecondary)
+                        }
+                    } else if (tmpl != null) {
+                        // Preview for Slot 2
+                        val bmp = tmpl.bitmap
+                        val imageBitmap = remember(bmp) { bmp.asImageBitmap() }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.Black)
+                                .border(1.dp, DarkBorder, RoundedCornerShape(12.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            val aspect = bmp.width.toFloat() / bmp.height.toFloat()
+                            Image(
+                                bitmap = imageBitmap,
+                                contentDescription = "Template Card",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .aspectRatio(aspect.coerceIn(0.5f, 2.5f))
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        OutlinedButton(
+                            onClick = { openTemplatePicker() },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("অন্য ফাঁকা ডিজাইন দিন", fontSize = 12.sp)
+                        }
+                    } else {
+                        // Using Default White Blank Template
+                        Surface(
+                            color = DarkSurfaceVariant,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(14.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("ডিফল্ট সাদা ফ্রেশ কার্ড নির্বাচন করা আছে", color = AccentGreen, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                OutlinedButton(onClick = { openTemplatePicker() }) {
+                                    Text("ছবি আপলোড করুন", fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Processing progress banner
             AnimatedVisibility(visible = isProcessing) {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = DarkSurfaceVariant),
@@ -532,7 +630,7 @@ fun HomeScreen(
                         )
                         Column {
                             Text(
-                                text = "AI ক্লোনিং ও বিশ্লেষণ চলছে",
+                                text = "AI ট্রান্সফার ও রিকনস্ট্রাকশন চলছে",
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = TextPrimary
@@ -547,106 +645,32 @@ fun HomeScreen(
                 }
             }
 
-            // How it works section
-            Text(
-                text = "কীভাবে কাজ করবে?",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = TextPrimary
-            )
-
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                StepInfoCard(
-                    stepNumber = "১",
-                    title = "কার্ড বা যেকোনো ছবি দিন",
-                    description = "যেকোনো দোকান, ব্যবসা, ভিজিটিং কার্ড বা ডকুমেন্টের ছবি নির্বাচন করুন।",
-                    icon = Icons.Default.AddPhotoAlternate,
-                    tint = AccentPrimary
-                )
-                StepInfoCard(
-                    stepNumber = "২",
-                    title = "Visual Analysis",
-                    description = "কার্ডের layout, লেখা, ছবি, ব্যাকগ্রাউন্ড ও কালার প্যালেট বিশ্লেষণ করা হবে।",
-                    icon = Icons.Default.Layers,
-                    tint = AccentCyan
-                )
-                StepInfoCard(
-                    stepNumber = "৩",
-                    title = "100% Exact HD Rebuild",
-                    description = "মূল কার্ডের হুবহু প্রতিটি উপাদান অক্ষত রেখে আল্ট্রা-এইচডি কোয়ালিটিতে তৈরি করা হবে।",
-                    icon = Icons.Default.AutoAwesome,
-                    tint = AccentSecondary
-                )
-                StepInfoCard(
-                    stepNumber = "৪",
-                    title = "Export & Secure",
-                    description = "তৈরি কার্ডটি হাই-কোয়ালিটি PNG বা JPG ফরম্যাটে সেভ বা শেয়ার করুন।",
-                    icon = Icons.Default.Download,
-                    tint = AccentGreen
-                )
+            // Action Button
+            Button(
+                onClick = { startProcessing() },
+                enabled = !isProcessing && sourceImagePrepared != null,
+                colors = ButtonDefaults.buttonColors(containerColor = AccentPrimary),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+                    .testTag("start_dual_reconstruction_button")
+            ) {
+                if (isProcessing) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("কাজ সম্পন্ন হচ্ছে...", fontWeight = FontWeight.Bold)
+                } else {
+                    Icon(Icons.Default.PlayArrow, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "১ম কার্ডের সব টেক্সট ও ফটো ২য় কার্ডে নিখুঁতভাবে বসান",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
-        }
-    }
-}
-
-@Composable
-private fun StepInfoCard(
-    stepNumber: String,
-    title: String,
-    description: String,
-    icon: ImageVector,
-    tint: Color
-) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = DarkSurface),
-        shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            modifier = Modifier.padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(tint.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = tint,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "$stepNumber. ",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = tint
-                    )
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = TextPrimary
-                    )
-                }
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = description,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = TextSecondary,
-                    lineHeight = 16.sp
-                )
-            }
         }
     }
 }

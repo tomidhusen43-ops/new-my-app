@@ -206,12 +206,12 @@ fun CornerEditorScreen(
                     modifier = Modifier
                         .width(displayWidth.dp)
                         .height(displayHeight.dp)
-                        .pointerInput(displayWidth, displayHeight) {
-                            val handleRadiusPx = 36.dp.toPx()
+                        .pointerInput(Unit) {
+                            val handleRadiusPx = 48.dp.toPx()
                             detectDragGestures(
                                 onDragStart = { offset ->
-                                    val normX = (offset.x / (displayWidth * density)).coerceIn(0f, 1f)
-                                    val normY = (offset.y / (displayHeight * density)).coerceIn(0f, 1f)
+                                    val canvasW = size.width.toFloat().coerceAtLeast(1f)
+                                    val canvasH = size.height.toFloat().coerceAtLeast(1f)
 
                                     val points = listOf(
                                         corners.topLeft,
@@ -225,8 +225,8 @@ fun CornerEditorScreen(
 
                                     for (i in points.indices) {
                                         val p = points[i]
-                                        val px = p.x * displayWidth * density
-                                        val py = p.y * displayHeight * density
+                                        val px = p.x * canvasW
+                                        val py = p.y * canvasH
                                         val dist = hypot(offset.x - px, offset.y - py)
                                         if (dist < handleRadiusPx && dist < closestDist) {
                                             closestDist = dist
@@ -239,8 +239,10 @@ fun CornerEditorScreen(
                                 onDrag = { change, _ ->
                                     activeCornerIndex?.let { index ->
                                         change.consume()
-                                        val normX = (change.position.x / (displayWidth * density)).coerceIn(0f, 1f)
-                                        val normY = (change.position.y / (displayHeight * density)).coerceIn(0f, 1f)
+                                        val canvasW = size.width.toFloat().coerceAtLeast(1f)
+                                        val canvasH = size.height.toFloat().coerceAtLeast(1f)
+                                        val normX = (change.position.x / canvasW).coerceIn(0f, 1f)
+                                        val normY = (change.position.y / canvasH).coerceIn(0f, 1f)
                                         val newPos = Offset(normX, normY)
 
                                         corners = when (index) {

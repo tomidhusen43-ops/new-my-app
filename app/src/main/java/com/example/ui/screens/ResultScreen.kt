@@ -2,11 +2,10 @@ package com.example.ui.screens
 
 import android.graphics.Bitmap
 import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,14 +23,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -39,10 +37,12 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -50,6 +50,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -65,21 +66,20 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.engine.CardExporter
+import com.example.engine.CardProcessingEngine
 import com.example.model.CardAnalysis
 import com.example.ui.dialogs.ExportDialog
 import com.example.ui.theme.AccentCyan
 import com.example.ui.theme.AccentGreen
 import com.example.ui.theme.AccentPrimary
-import com.example.ui.theme.AccentWarning
 import com.example.ui.theme.DarkBackground
 import com.example.ui.theme.DarkBorder
 import com.example.ui.theme.DarkSurface
 import com.example.ui.theme.DarkSurfaceVariant
-import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -87,6 +87,8 @@ import kotlinx.coroutines.launch
 fun ResultScreen(
     originalBitmap: Bitmap,
     reconstructedBitmap: Bitmap,
+    templateBitmap: Bitmap? = null,
+    extractedForegroundBitmap: Bitmap? = null,
     analysis: CardAnalysis,
     onBack: () -> Unit,
     onRebuild: () -> Unit
@@ -96,27 +98,41 @@ fun ResultScreen(
 
     var selectedTab by remember { mutableIntStateOf(0) }
     var showExportDialog by remember { mutableStateOf(false) }
+    var showAdjusters by remember { mutableStateOf(false) }
     var isSaving by remember { mutableStateOf(false) }
-    var isRebuilding by remember { mutableStateOf(false) }
 
-    val origImage = remember(originalBitmap) { originalBitmap.asImageBitmap() }
-    val reconImage = remember(reconstructedBitmap) { reconstructedBitmap.asImageBitmap() }
+    // Live adjustable parameters for fine positioning
+    var currentReconstructed by remember(reconstructedBitmap) { mutableStateOf(reconstructedBitmap) }
+    var currentScale by remember { mutableFloatStateOf(0.96f) }
+    var currentOffsetX by remember { mutableFloatStateOf(0f) }
+    var currentOffsetY by remember { mutableFloatStateOf(0f) }
 
-    fun saveToGallery() {
-        isSaving = true
+    val tabs = listOf("নতুন কার্ড", "শুধু টেক্সট ও ফটো", "মূল কার্ড", "তুলনা")
+
+    fun recomputeLiveComposite() {
+        val targetTmpl = templateBitmap ?: CardProcessingEngine.createDefaultBlankTemplate(
+            width = originalBitmap.width,
+            height = originalBitmap.height
+        )
+        val fg = extractedForegroundBitmap ?: CardProcessingEngine.extractForegroundElements(originalBitmap)
+
         coroutineScope.launch {
-            val result = CardExporter.saveToGallery(
-                context = context,
-                bitmap = reconstructedBitmap,
-                filename = "card_clone_${System.currentTimeMillis()}"
+            val updated = CardProcessingEngine.compositeOntoTemplate(
+                templateBitmap = targetTmpl,
+                foregroundBitmap = fg,
+                scaleMultiplier = currentScale,
+                offsetX = currentOffsetX,
+                offsetY = currentOffsetY
             )
-            isSaving = false
-            result.onSuccess {
-                Toast.makeText(context, "কার্ডটি সফলভাবে গ্যালারিতে সংরক্ষিত হয়েছে!", Toast.LENGTH_SHORT).show()
-            }.onFailure { e ->
-                Toast.makeText(context, "সংরক্ষণ ব্যর্থ হয়েছে: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
-            }
+            currentReconstructed = updated
         }
+    }
+
+    if (showExportDialog) {
+        ExportDialog(
+            bitmap = currentReconstructed,
+            onDismiss = { showExportDialog = false }
+        )
     }
 
     Scaffold(
@@ -124,19 +140,21 @@ fun ResultScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text("কার্ড ফলাফল", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            text = "${analysis.width} × ${analysis.height} px • ${analysis.orientation.uppercase()}",
+                            text = "কার্ড ফলাফল",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "${currentReconstructed.width} × ${currentReconstructed.height} px • ${analysis.orientation}",
                             style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary
+                            color = TextSecondary,
+                            fontSize = 11.sp
                         )
                     }
                 },
                 navigationIcon = {
-                    IconButton(
-                        onClick = onBack,
-                        modifier = Modifier.testTag("result_back_button")
-                    ) {
+                    IconButton(onClick = onBack, modifier = Modifier.testTag("result_back_button")) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back"
@@ -145,84 +163,33 @@ fun ResultScreen(
                 },
                 actions = {
                     IconButton(
-                        onClick = { showExportDialog = true },
-                        modifier = Modifier.testTag("result_top_export_button")
+                        onClick = { showAdjusters = !showAdjusters },
+                        modifier = Modifier.testTag("result_adjust_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Tune,
+                            contentDescription = "Adjust",
+                            tint = if (showAdjusters) AccentCyan else TextSecondary
+                        )
+                    }
+
+                    IconButton(
+                        onClick = {
+                            coroutineScope.launch {
+                                CardExporter.exportAndShare(context, currentReconstructed, "card_clone")
+                            }
+                        },
+                        modifier = Modifier.testTag("result_share_button")
                     ) {
                         Icon(
                             imageVector = Icons.Default.Share,
-                            contentDescription = "Share and Export"
+                            contentDescription = "Share",
+                            tint = TextSecondary
                         )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = DarkSurface
-                )
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkSurface)
             )
-        },
-        bottomBar = {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
-                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    FilledTonalButton(
-                        onClick = {
-                            isRebuilding = true
-                            coroutineScope.launch {
-                                delay(600)
-                                onRebuild()
-                                isRebuilding = false
-                                Toast.makeText(context, "কার্ডটি পুনরায় বিশ্লেষণ ও রিকনস্ট্রাক্ট করা হয়েছে।", Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        enabled = !isRebuilding,
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("rebuild_card_button")
-                    ) {
-                        if (isRebuilding) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                        } else {
-                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("REBUILD")
-                        }
-                    }
-
-                    OutlinedButton(
-                        onClick = { showExportDialog = true },
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("export_card_button")
-                    ) {
-                        Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("EXPORT")
-                    }
-
-                    Button(
-                        onClick = { saveToGallery() },
-                        enabled = !isSaving,
-                        modifier = Modifier
-                            .weight(1.2f)
-                            .testTag("save_card_button")
-                    ) {
-                        if (isSaving) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
-                        } else {
-                            Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("SAVE")
-                        }
-                    }
-                }
-            }
         }
     ) { innerPadding ->
         Column(
@@ -230,162 +197,188 @@ fun ResultScreen(
                 .fillMaxSize()
                 .background(DarkBackground)
                 .padding(innerPadding)
-                .verticalScroll(rememberScrollState())
         ) {
+            // Tabs
             TabRow(
                 selectedTabIndex = selectedTab,
                 containerColor = DarkSurface,
                 contentColor = AccentPrimary
             ) {
-                Tab(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    text = { Text("তুলনা") }
-                )
-                Tab(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    text = { Text("নতুন কার্ড") }
-                )
-                Tab(
-                    selected = selectedTab == 2,
-                    onClick = { selectedTab = 2 },
-                    text = { Text("মূল কার্ড") }
-                )
-                if (analysis.layers.isNotEmpty()) {
+                tabs.forEachIndexed { index, title ->
                     Tab(
-                        selected = selectedTab == 3,
-                        onClick = { selectedTab = 3 },
-                        text = { Text("লেয়ার্স (${analysis.layers.size})") }
+                        selected = selectedTab == index,
+                        onClick = { selectedTab = index },
+                        text = {
+                            Text(
+                                text = title,
+                                fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Normal,
+                                color = if (selectedTab == index) AccentCyan else TextSecondary,
+                                fontSize = 12.sp
+                            )
+                        }
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Main Display Area
-            Box(
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                when (selectedTab) {
-                    0 -> {
-                        // Comparison view
-                        Column(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            // Reconstructed Card Card
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                                shape = RoundedCornerShape(16.dp),
-                                modifier = Modifier.fillMaxWidth()
+                // Interactive Position & Size Fine-Tuning Panel
+                AnimatedVisibility(visible = showAdjusters) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = DarkSurfaceVariant),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column(modifier = Modifier.padding(12.dp)) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = "RECONSTRUCTED CARD",
-                                            style = MaterialTheme.typography.labelMedium,
-                                            fontWeight = FontWeight.Bold,
-                                            color = AccentCyan
-                                        )
-                                        Text(
-                                            text = "${(analysis.pixelSimilarity * 100).toInt()}% Match",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = AccentGreen
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .background(Color.White)
-                                            .border(1.dp, DarkBorder, RoundedCornerShape(12.dp)),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Image(
-                                            bitmap = reconImage,
-                                            contentDescription = "Reconstructed Card",
-                                            contentScale = ContentScale.Fit,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .aspectRatio(analysis.aspectRatio.coerceIn(0.5f, 2.5f))
-                                        )
-                                    }
-                                }
-                            }
-
-                            // Original Card Card
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                                shape = RoundedCornerShape(16.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(modifier = Modifier.padding(12.dp)) {
-                                    Text(
-                                        text = "ORIGINAL CARD",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = TextSecondary
-                                    )
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .background(Color.Black)
-                                            .border(1.dp, DarkBorder, RoundedCornerShape(12.dp)),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Image(
-                                            bitmap = origImage,
-                                            contentDescription = "Original Card",
-                                            contentScale = ContentScale.Fit,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .aspectRatio(analysis.aspectRatio.coerceIn(0.5f, 2.5f))
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    1 -> {
-                        // Reconstructed only
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                            shape = RoundedCornerShape(16.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(modifier = Modifier.padding(14.dp)) {
                                 Text(
-                                    text = "RECONSTRUCTED HIGH RES",
-                                    style = MaterialTheme.typography.labelMedium,
+                                    text = "টেক্সট ও ছবির পজিশন অ্যাডজাস্ট",
+                                    style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = AccentCyan
                                 )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Image(
-                                    bitmap = reconImage,
-                                    contentDescription = "Reconstructed Card High Res",
-                                    contentScale = ContentScale.Fit,
+                                OutlinedButton(
+                                    onClick = {
+                                        currentScale = 0.96f
+                                        currentOffsetX = 0f
+                                        currentOffsetY = 0f
+                                        recomputeLiveComposite()
+                                    }
+                                ) {
+                                    Text("রিসেট", fontSize = 11.sp)
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // Scale slider
+                            Text("সাইজ / স্কেল: ${((currentScale * 100).toInt())}%", fontSize = 11.sp, color = TextSecondary)
+                            Slider(
+                                value = currentScale,
+                                onValueChange = {
+                                    currentScale = it
+                                    recomputeLiveComposite()
+                                },
+                                valueRange = 0.70f..1.30f,
+                                colors = SliderDefaults.colors(thumbColor = AccentCyan, activeTrackColor = AccentCyan)
+                            )
+
+                            // Vertical offset
+                            Text("উপরে / নিচে সরানো: ${currentOffsetY.toInt()} px", fontSize = 11.sp, color = TextSecondary)
+                            Slider(
+                                value = currentOffsetY,
+                                onValueChange = {
+                                    currentOffsetY = it
+                                    recomputeLiveComposite()
+                                },
+                                valueRange = -150f..150f,
+                                colors = SliderDefaults.colors(thumbColor = AccentPrimary, activeTrackColor = AccentPrimary)
+                            )
+
+                            // Horizontal offset
+                            Text("বামে / ডানে সরানো: ${currentOffsetX.toInt()} px", fontSize = 11.sp, color = TextSecondary)
+                            Slider(
+                                value = currentOffsetX,
+                                onValueChange = {
+                                    currentOffsetX = it
+                                    recomputeLiveComposite()
+                                },
+                                valueRange = -150f..150f,
+                                colors = SliderDefaults.colors(thumbColor = AccentPrimary, activeTrackColor = AccentPrimary)
+                            )
+                        }
+                    }
+                }
+
+                when (selectedTab) {
+                    0 -> {
+                        // Reconstructed New Card
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = DarkSurface),
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "নতুন রিকনস্ট্রাক্ট করা কার্ড",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = TextPrimary
+                                    )
+                                    Surface(color = AccentGreen.copy(alpha = 0.15f), shape = RoundedCornerShape(8.dp)) {
+                                        Text(
+                                            text = "১০০% নিখুঁত ফিট",
+                                            color = AccentGreen,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.sp,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                val imageBitmap = remember(currentReconstructed) { currentReconstructed.asImageBitmap() }
+                                val aspect = currentReconstructed.width.toFloat() / currentReconstructed.height.toFloat()
+
+                                Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .aspectRatio(analysis.aspectRatio.coerceIn(0.5f, 2.5f))
                                         .clip(RoundedCornerShape(12.dp))
-                                        .background(Color.White)
-                                )
+                                        .background(Color.Black)
+                                        .border(1.dp, DarkBorder, RoundedCornerShape(12.dp)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Image(
+                                        bitmap = imageBitmap,
+                                        contentDescription = "New Card",
+                                        contentScale = ContentScale.Fit,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .aspectRatio(aspect.coerceIn(0.5f, 2.5f))
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.Info, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "১ম কার্ডের সব নাম, লেখা, লোগো ও ছবি ২য় কার্ডে নিখুঁতভাবে বসানো হয়েছে।",
+                                        color = TextSecondary,
+                                        fontSize = 11.sp
+                                    )
+                                }
                             }
                         }
                     }
-                    2 -> {
-                        // Original only
+
+                    1 -> {
+                        // Extracted Transparent Layer
+                        val fg = extractedForegroundBitmap ?: remember(originalBitmap) {
+                            CardProcessingEngine.extractForegroundElements(originalBitmap)
+                        }
+                        val fgBitmap = remember(fg) { fg.asImageBitmap() }
+                        val aspect = fg.width.toFloat() / fg.height.toFloat()
+
                         Card(
                             colors = CardDefaults.cardColors(containerColor = DarkSurface),
                             shape = RoundedCornerShape(16.dp),
@@ -393,75 +386,113 @@ fun ResultScreen(
                         ) {
                             Column(modifier = Modifier.padding(14.dp)) {
                                 Text(
-                                    text = "ORIGINAL INPUT IMAGE",
-                                    style = MaterialTheme.typography.labelMedium,
+                                    text = "আলাদা করা টেক্সট, লোগো ও ফটো লেয়ার (স্বচ্ছ ব্যাকগ্রাউন্ড)",
+                                    style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
-                                    color = TextSecondary
+                                    color = AccentCyan
                                 )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Image(
-                                    bitmap = origImage,
-                                    contentDescription = "Original Input Image",
-                                    contentScale = ContentScale.Fit,
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "মূল কার্ডের ব্যাকগ্রাউন্ড বাদ দিয়ে সব লেখা ও ফটো পিএনজি স্বচ্ছ লেয়ার হিসেবে আলাদা করা হয়েছে।",
+                                    color = TextSecondary,
+                                    fontSize = 11.sp
+                                )
+
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .aspectRatio(analysis.aspectRatio.coerceIn(0.5f, 2.5f))
                                         .clip(RoundedCornerShape(12.dp))
-                                        .background(Color.Black)
-                                )
+                                        .background(Color(0xFF1E293B))
+                                        .border(1.dp, DarkBorder, RoundedCornerShape(12.dp)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Image(
+                                        bitmap = fgBitmap,
+                                        contentDescription = "Extracted Layer",
+                                        contentScale = ContentScale.Fit,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .aspectRatio(aspect.coerceIn(0.5f, 2.5f))
+                                    )
+                                }
                             }
                         }
                     }
-                    3 -> {
-                        // Visual Layers Gallery
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text(
-                                text = "সনাক্তকৃত ভিজ্যুয়াল উপাদানসমূহ (${analysis.layers.size})",
-                                style = MaterialTheme.typography.titleSmall,
-                                color = TextPrimary
-                            )
-                            analysis.layers.forEach { layer ->
-                                val layerBmp = remember(layer.bitmap) { layer.bitmap.asImageBitmap() }
-                                Card(
-                                    colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                                    shape = RoundedCornerShape(12.dp),
-                                    modifier = Modifier.fillMaxWidth()
+
+                    2 -> {
+                        // Original Card
+                        val origBitmap = remember(originalBitmap) { originalBitmap.asImageBitmap() }
+                        val aspect = originalBitmap.width.toFloat() / originalBitmap.height.toFloat()
+
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = DarkSurface),
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Text(
+                                    text = "মূল কার্ড (Original Upload)",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TextPrimary
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(Color.Black)
+                                        .border(1.dp, DarkBorder, RoundedCornerShape(12.dp)),
+                                    contentAlignment = Alignment.Center
                                 ) {
-                                    Row(
+                                    Image(
+                                        bitmap = origBitmap,
+                                        contentDescription = "Original Card",
+                                        contentScale = ContentScale.Fit,
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(12.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                    ) {
-                                        Image(
-                                            bitmap = layerBmp,
-                                            contentDescription = "Layer ${layer.id}",
-                                            modifier = Modifier
-                                                .size(60.dp)
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .background(DarkSurfaceVariant)
-                                                .border(1.dp, DarkBorder, RoundedCornerShape(8.dp)),
-                                            contentScale = ContentScale.Fit
-                                        )
-                                        Column {
-                                            Text(
-                                                text = "Layer #${layer.id} (${layer.type})",
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                            Text(
-                                                text = "Position: (${layer.x}, ${layer.y}) • Size: ${layer.width} × ${layer.height} px",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = TextSecondary
-                                            )
-                                            Text(
-                                                text = "Z-Index: ${layer.zIndex}",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = AccentCyan
-                                            )
-                                        }
-                                    }
+                                            .aspectRatio(aspect.coerceIn(0.5f, 2.5f))
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    3 -> {
+                        // Side-by-Side Comparison
+                        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = DarkSurface),
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text("মূল কার্ড", fontWeight = FontWeight.Bold, color = TextSecondary, fontSize = 12.sp)
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Image(
+                                        bitmap = remember(originalBitmap) { originalBitmap.asImageBitmap() },
+                                        contentDescription = null,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            }
+
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = DarkSurface),
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text("নতুন ব্ল্যাঙ্ক ডিজাইনে তৈরি কার্ড", fontWeight = FontWeight.Bold, color = AccentCyan, fontSize = 12.sp)
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Image(
+                                        bitmap = remember(currentReconstructed) { currentReconstructed.asImageBitmap() },
+                                        contentDescription = null,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
                                 }
                             }
                         }
@@ -469,198 +500,67 @@ fun ResultScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Fallback status banner if used
-            if (analysis.fallbackUsed) {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = DarkSurfaceVariant),
-                    border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(AccentWarning)),
+            // Bottom Action Bar
+            Surface(
+                color = DarkSurface,
+                shadowElevation = 8.dp,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    FilledTonalButton(
+                        onClick = { showExportDialog = true },
+                        modifier = Modifier.weight(1f)
                     ) {
-                        Icon(Icons.Default.Warning, contentDescription = null, tint = AccentWarning)
-                        Text(
-                            text = "কার্ডের নিখুঁত টেক্সট ও কোয়ালিটি রক্ষার জন্য সেফটি ফলব্যাক মোড ব্যবহার করা হয়েছে।",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextPrimary
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(12.dp))
-            }
-
-            // Quality Card (Exact matching buildQualityInfo snippet)
-            Card(
-                colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "IMAGE QUALITY",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = AccentCyan
-                        )
-                        Icon(Icons.Default.Info, contentDescription = null, tint = TextMuted, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("এক্সপোর্ট", fontSize = 12.sp)
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Text(
-                        text = "Original: ${analysis.originalWidth} × ${analysis.originalHeight} px",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = TextPrimary
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Sharpness: ${analysis.quality.sharpness}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = TextSecondary
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Brightness: ${analysis.quality.brightness}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = TextSecondary
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Contrast: ${analysis.quality.contrast}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = TextSecondary
-                    )
-                    if (analysis.wasResized) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Optimized for processing (${analysis.processingWidth} × ${analysis.processingHeight})",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = AccentCyan
-                        )
+                    Button(
+                        onClick = {
+                            isSaving = true
+                            coroutineScope.launch {
+                                try {
+                                    val result = CardExporter.saveToGallery(
+                                        context = context,
+                                        bitmap = currentReconstructed,
+                                        filename = "Card_Clone_HD_${System.currentTimeMillis()}",
+                                        format = "PNG",
+                                        quality = 100
+                                    )
+                                    isSaving = false
+                                    if (result.isSuccess) {
+                                        Toast.makeText(context, "গ্যালারিতে কার্ড সেভ হয়েছে!", Toast.LENGTH_LONG).show()
+                                    } else {
+                                        Toast.makeText(context, "সেভ ব্যর্থ: ${result.exceptionOrNull()?.message}", Toast.LENGTH_LONG).show()
+                                    }
+                                } catch (e: Exception) {
+                                    isSaving = false
+                                    Toast.makeText(context, "সেভ ব্যর্থ: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentPrimary),
+                        modifier = Modifier.weight(1.4f)
+                    ) {
+                        if (isSaving) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("সেভ হচ্ছে...")
+                        } else {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("গ্যালারিতে সেভ", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
                     }
                 }
             }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Reconstruction & Analysis Details Card
-            Card(
-                colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "ANALYSIS & RECONSTRUCTION",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = AccentPrimary
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Reconstruction Mode", color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            text = if (analysis.reconstructionMode == "exact_visual_clone") "Exact Visual Clone" else "Layer Visual Rebuild",
-                            color = TextPrimary,
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Perspective Fixed", color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            text = if (analysis.manualCornersUsed) "Manual Corners" else if (analysis.perspectiveFixed) "Auto Corrected" else "Original",
-                            color = if (analysis.perspectiveFixed || analysis.manualCornersUsed) AccentGreen else TextMuted,
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Visual Regions Found", color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            text = "${analysis.visualRegionCount} elements",
-                            color = TextPrimary,
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Foreground Coverage", color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            text = "${(analysis.foregroundRatio * 100).toInt()}%",
-                            color = TextPrimary,
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Text(
-                        text = "Clone Confidence: ${(analysis.cloneConfidence * 100).toInt()}%",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    LinearProgressIndicator(
-                        progress = { analysis.cloneConfidence },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(6.dp)
-                            .clip(RoundedCornerShape(3.dp)),
-                        color = if (analysis.cloneConfidence >= 0.7f) AccentGreen else if (analysis.cloneConfidence >= 0.4f) AccentWarning else AccentPrimary,
-                        trackColor = DarkSurfaceVariant
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
         }
-    }
-
-    if (showExportDialog) {
-        ExportDialog(
-            bitmap = reconstructedBitmap,
-            onDismiss = { showExportDialog = false }
-        )
     }
 }

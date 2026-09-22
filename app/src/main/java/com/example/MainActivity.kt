@@ -33,7 +33,13 @@ import kotlinx.coroutines.launch
 sealed interface AppDestination {
     data object Home : AppDestination
     data class CornerEditor(val bitmap: Bitmap, val corners: CardCorners) : AppDestination
-    data class Result(val original: Bitmap, val reconstructed: Bitmap, val analysis: CardAnalysis) : AppDestination
+    data class Result(
+        val original: Bitmap,
+        val reconstructed: Bitmap,
+        val templateCard: Bitmap?,
+        val extractedForeground: Bitmap?,
+        val analysis: CardAnalysis
+    ) : AppDestination
     data object Batch : AppDestination
     data object PinSetup : AppDestination
 }
@@ -86,8 +92,8 @@ fun CardCloneApp(
         when (val screen = currentScreen) {
             is AppDestination.Home -> {
                 HomeScreen(
-                    onNavigateToResult = { orig, recon, analysis ->
-                        currentScreen = AppDestination.Result(orig, recon, analysis)
+                    onNavigateToResult = { orig, recon, template, fg, analysis ->
+                        currentScreen = AppDestination.Result(orig, recon, template, fg, analysis)
                     },
                     onNavigateToCornerEditor = { bmp, corners ->
                         currentScreen = AppDestination.CornerEditor(bmp, activeManualCorners ?: corners)
@@ -141,6 +147,8 @@ fun CardCloneApp(
                 ResultScreen(
                     originalBitmap = screen.original,
                     reconstructedBitmap = screen.reconstructed,
+                    templateBitmap = screen.templateCard,
+                    extractedForegroundBitmap = screen.extractedForeground,
                     analysis = screen.analysis,
                     onBack = {
                         currentScreen = AppDestination.Home
@@ -157,11 +165,12 @@ fun CardCloneApp(
                                 wasResized = screen.analysis.wasResized,
                                 quality = quality
                             )
-                            val (newAnalysis, newRecon) = CardProcessingEngine.processCardPipeline(
-                                prepared = prep,
+                            val (newAnalysis, newRecon, newFg) = CardProcessingEngine.processDualCardPipeline(
+                                sourcePrepared = prep,
+                                templateBitmap = screen.templateCard,
                                 manualCorners = activeManualCorners
                             )
-                            currentScreen = AppDestination.Result(screen.original, newRecon, newAnalysis)
+                            currentScreen = AppDestination.Result(screen.original, newRecon, screen.templateCard, newFg, newAnalysis)
                         }
                     }
                 )
@@ -176,7 +185,7 @@ fun CardCloneApp(
                         currentScreen = AppDestination.Home
                     },
                     onInspectCard = { orig, recon, analysis ->
-                        currentScreen = AppDestination.Result(orig, recon, analysis)
+                        currentScreen = AppDestination.Result(orig, recon, null, null, analysis)
                     }
                 )
             }
