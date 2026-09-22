@@ -1,0 +1,6 @@
+{
+  "name": "Card Clone AI",
+  "description": "Universal card cloning and visual rebuilder app that reconstructs business cards, loyalty cards, and store cards with perspective correction, quality analysis, and multi-format export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
