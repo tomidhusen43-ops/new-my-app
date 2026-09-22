@@ -19,9 +19,12 @@ import androidx.compose.ui.Modifier
 import com.example.engine.CardProcessingEngine
 import com.example.model.CardAnalysis
 import com.example.model.CardCorners
+import com.example.security.SecurityManager
 import com.example.ui.screens.BatchScreen
 import com.example.ui.screens.CornerEditorScreen
 import com.example.ui.screens.HomeScreen
+import com.example.ui.screens.PinLockScreen
+import com.example.ui.screens.PinMode
 import com.example.ui.screens.ResultScreen
 import com.example.ui.theme.DarkBackground
 import com.example.ui.theme.MyApplicationTheme
@@ -32,25 +35,48 @@ sealed interface AppDestination {
     data class CornerEditor(val bitmap: Bitmap, val corners: CardCorners) : AppDestination
     data class Result(val original: Bitmap, val reconstructed: Bitmap, val analysis: CardAnalysis) : AppDestination
     data object Batch : AppDestination
+    data object PinSetup : AppDestination
 }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        SecurityManager.applyScreenSecurity(this)
+        SecurityManager.checkAndLock(this)
         setContent {
             MyApplicationTheme {
-                CardCloneApp()
+                CardCloneApp(
+                    onExitApp = { finish() }
+                )
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        SecurityManager.applyScreenSecurity(this)
     }
 }
 
 @Composable
-fun CardCloneApp() {
+fun CardCloneApp(
+    onExitApp: () -> Unit = {}
+) {
     val coroutineScope = rememberCoroutineScope()
     var currentScreen by remember { mutableStateOf<AppDestination>(AppDestination.Home) }
     var activeManualCorners by remember { mutableStateOf<CardCorners?>(null) }
+
+    // If app is locked with PIN, present PIN unlock screen first
+    if (SecurityManager.isAppLocked.value) {
+        PinLockScreen(
+            mode = PinMode.UNLOCK,
+            onSuccess = {
+                SecurityManager.unlock()
+            }
+        )
+        return
+    }
 
     Box(
         modifier = Modifier
@@ -69,7 +95,25 @@ fun CardCloneApp() {
                     onNavigateToBatch = {
                         currentScreen = AppDestination.Batch
                     },
+                    onOpenPinSetup = {
+                        currentScreen = AppDestination.PinSetup
+                    },
                     manualCorners = activeManualCorners
+                )
+            }
+
+            is AppDestination.PinSetup -> {
+                BackHandler {
+                    currentScreen = AppDestination.Home
+                }
+                PinLockScreen(
+                    mode = PinMode.SETUP,
+                    onSuccess = {
+                        currentScreen = AppDestination.Home
+                    },
+                    onCancel = {
+                        currentScreen = AppDestination.Home
+                    }
                 )
             }
 
@@ -103,7 +147,7 @@ fun CardCloneApp() {
                     },
                     onRebuild = {
                         coroutineScope.launch {
-                            val prepared = CardProcessingEngine.calculateImageQuality(screen.original)
+                            val quality = CardProcessingEngine.calculateImageQuality(screen.original)
                             val prep = CardProcessingEngine.PreparedImage(
                                 bitmap = screen.original,
                                 originalWidth = screen.analysis.originalWidth,
@@ -111,7 +155,7 @@ fun CardCloneApp() {
                                 processingWidth = screen.analysis.processingWidth,
                                 processingHeight = screen.analysis.processingHeight,
                                 wasResized = screen.analysis.wasResized,
-                                quality = prepared
+                                quality = quality
                             )
                             val (newAnalysis, newRecon) = CardProcessingEngine.processCardPipeline(
                                 prepared = prep,
@@ -139,4 +183,3 @@ fun CardCloneApp() {
         }
     }
 }
-

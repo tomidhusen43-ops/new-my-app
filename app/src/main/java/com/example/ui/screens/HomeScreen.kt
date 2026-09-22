@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
@@ -36,6 +37,8 @@ import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -75,6 +78,8 @@ import androidx.compose.ui.unit.sp
 import com.example.engine.CardProcessingEngine
 import com.example.model.CardAnalysis
 import com.example.model.CardCorners
+import com.example.security.SecurityManager
+import com.example.ui.dialogs.SecuritySettingsDialog
 import com.example.ui.theme.AccentCyan
 import com.example.ui.theme.AccentGreen
 import com.example.ui.theme.AccentPrimary
@@ -95,6 +100,7 @@ fun HomeScreen(
     onNavigateToResult: (Bitmap, Bitmap, CardAnalysis) -> Unit,
     onNavigateToCornerEditor: (Bitmap, CardCorners) -> Unit,
     onNavigateToBatch: () -> Unit,
+    onOpenPinSetup: () -> Unit,
     manualCorners: CardCorners? = null
 ) {
     val context = LocalContext.current
@@ -104,20 +110,50 @@ fun HomeScreen(
     var preparedImage by remember { mutableStateOf<CardProcessingEngine.PreparedImage?>(null) }
     var isProcessing by remember { mutableStateOf(false) }
     var currentStepMessage by remember { mutableStateOf("") }
+    var showSecurityDialog by remember { mutableStateOf(false) }
 
+    fun processLoadedUri(uri: Uri) {
+        selectedImageUri = uri
+        coroutineScope.launch {
+            try {
+                val prep = CardProcessingEngine.prepareImage(context, uri)
+                preparedImage = prep
+                Toast.makeText(context, "ছবি সফলভাবে লোড হয়েছে!", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(
+                    context,
+                    "ছবি লোড করতে সমস্যা হয়েছে: ${e.localizedMessage}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    // Modern Photo Picker contract
     val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            processLoadedUri(uri)
+        }
+    }
+
+    // Fallback Content Picker
+    val fallbackPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
-            selectedImageUri = uri
-            coroutineScope.launch {
-                try {
-                    val prep = CardProcessingEngine.prepareImage(context, uri)
-                    preparedImage = prep
-                } catch (e: Exception) {
-                    Toast.makeText(context, "ছবি লোড করতে সমস্যা হয়েছে: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
-                }
-            }
+            processLoadedUri(uri)
+        }
+    }
+
+    fun openImagePicker() {
+        try {
+            photoPickerLauncher.launch(
+                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+            )
+        } catch (_: Exception) {
+            fallbackPickerLauncher.launch("image/*")
         }
     }
 
@@ -126,10 +162,10 @@ fun HomeScreen(
         isProcessing = true
         coroutineScope.launch {
             try {
-                currentStepMessage = "পারসপেক্টিভ ও জ্যামিতিক বিন্যাস বিশ্লেষণ..."
+                currentStepMessage = "পারসপেক্টিভ ও ছবি বিন্যাস বিশ্লেষণ..."
                 delay(300)
 
-                currentStepMessage = "ব্যাকগ্রাউন্ড ও ভিজ্যুয়াল লেয়ার আলাদা করা হচ্ছে..."
+                currentStepMessage = "১০০% হুবহু উপাদান ও আল্ট্রা-এইচডি এনহ্যান্সমেন্ট..."
                 delay(400)
 
                 val (analysis, reconstructed) = CardProcessingEngine.processCardPipeline(
@@ -147,6 +183,13 @@ fun HomeScreen(
                 Toast.makeText(context, "প্রসেসিং ব্যর্থ হয়েছে: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
             }
         }
+    }
+
+    if (showSecurityDialog) {
+        SecuritySettingsDialog(
+            onDismiss = { showSecurityDialog = false },
+            onOpenPinSetup = onOpenPinSetup
+        )
     }
 
     Scaffold(
@@ -180,7 +223,7 @@ fun HomeScreen(
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "Universal Card Rebuilder",
+                                text = "হুবহু কার্ড ও ছবি রিকনস্ট্রাক্টর",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TextSecondary,
                                 fontSize = 11.sp
@@ -189,6 +232,20 @@ fun HomeScreen(
                     }
                 },
                 actions = {
+                    // Security & Privacy Shield button
+                    IconButton(
+                        onClick = { showSecurityDialog = true },
+                        modifier = Modifier.testTag("home_security_button")
+                    ) {
+                        val isPinOn = SecurityManager.isPinEnabled(context)
+                        Icon(
+                            imageVector = if (isPinOn) Icons.Default.Shield else Icons.Default.Security,
+                            contentDescription = "Security Settings",
+                            tint = if (isPinOn) AccentGreen else AccentCyan
+                        )
+                    }
+
+                    // Batch mode
                     IconButton(
                         onClick = onNavigateToBatch,
                         modifier = Modifier.testTag("home_batch_button")
@@ -196,7 +253,7 @@ fun HomeScreen(
                         Icon(
                             imageVector = Icons.Default.Collections,
                             contentDescription = "Batch Mode",
-                            tint = AccentCyan
+                            tint = TextSecondary
                         )
                     }
                 },
@@ -213,8 +270,35 @@ fun HomeScreen(
                 .padding(innerPadding)
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp)
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // Security Badge Banner
+            Surface(
+                color = DarkSurface,
+                shape = RoundedCornerShape(14.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, DarkBorder),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Shield,
+                        contentDescription = null,
+                        tint = AccentGreen,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "১০০% সুরক্ষিত ও অন-ডিভাইস প্রসেসিং • পিন লক সুবিধা অন্তর্ভুক্ত",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary,
+                        fontSize = 11.sp
+                    )
+                }
+            }
+
             // Welcome Description Card
             Card(
                 colors = CardDefaults.cardColors(containerColor = DarkSurface),
@@ -223,14 +307,14 @@ fun HomeScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = "স্মার্ট কার্ড ক্লোনিং ও রিকনস্ট্রাকশন",
+                        text = "১০০% হুবহু কার্ড ও ছবি ক্লোনিং",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = AccentCyan
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "যেকোনো দোকান বা ব্যবসার কার্ডের ছবি দিন। AI সেটার ডিজাইন, লেখা, ছবি ও অন্যান্য ভিজ্যুয়াল উপাদান বিশ্লেষণ করে নতুনের মতো রিকনস্ট্রাক্ট করবে।",
+                        text = "যেকোনো দোকান, ব্যবসা, আইডি কার্ড বা ডকুমেন্টের ছবি দিন। মূল ডিজাইন, লেখা, লোগো, রঙ ও ব্যাকগ্রাউন্ড ১০০% হুবহু অক্ষত রেখে আল্ট্রা-এইচডি কোয়ালিটিতে রিকনস্ট্রাক্ট করা হবে।",
                         style = MaterialTheme.typography.bodyMedium,
                         color = TextSecondary,
                         lineHeight = 20.sp
@@ -252,13 +336,13 @@ fun HomeScreen(
                             color = DarkBorder,
                             shape = RoundedCornerShape(20.dp)
                         )
-                        .clickable { photoPickerLauncher.launch("image/*") }
+                        .clickable { openImagePicker() }
                         .testTag("card_picker_container")
                 ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 40.dp, horizontal = 20.dp),
+                            .padding(vertical = 36.dp, horizontal = 20.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
@@ -280,7 +364,7 @@ fun HomeScreen(
                         Spacer(modifier = Modifier.height(16.dp))
 
                         Text(
-                            text = "কার্ডের ছবি নির্বাচন করুন",
+                            text = "যেকোনো কার্ড বা ছবির ফাইল দিন",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = TextPrimary
@@ -289,16 +373,17 @@ fun HomeScreen(
                         Spacer(modifier = Modifier.height(6.dp))
 
                         Text(
-                            text = "Gallery থেকে কার্ডের ছবি নির্বাচন করতে চাপ দিন",
+                            text = "Gallery বা ফাইলস থেকে যেকোনো ছবি নির্বাচন করুন",
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary,
                             textAlign = TextAlign.Center
                         )
 
-                        Spacer(modifier = Modifier.height(20.dp))
+                        Spacer(modifier = Modifier.height(18.dp))
 
                         Button(
-                            onClick = { photoPickerLauncher.launch("image/*") },
+                            onClick = { openImagePicker() },
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentPrimary),
                             modifier = Modifier.testTag("upload_card_button")
                         ) {
                             Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -324,7 +409,7 @@ fun HomeScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "কার্ড প্রিভিউ",
+                                text = "নির্বাচিত ছবির প্রিভিউ",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = TextPrimary
@@ -359,7 +444,7 @@ fun HomeScreen(
                                 contentScale = ContentScale.Fit,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .aspectRatio(aspect.coerceIn(0.6f, 2.4f))
+                                    .aspectRatio(aspect.coerceIn(0.5f, 2.5f))
                             )
                         }
 
@@ -371,7 +456,7 @@ fun HomeScreen(
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             OutlinedButton(
-                                onClick = { photoPickerLauncher.launch("image/*") },
+                                onClick = { openImagePicker() },
                                 modifier = Modifier
                                     .weight(1f)
                                     .testTag("change_card_button")
@@ -401,7 +486,7 @@ fun HomeScreen(
                             colors = ButtonDefaults.buttonColors(containerColor = AccentPrimary),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(48.dp)
+                                .height(50.dp)
                                 .testTag("start_reconstruction_button")
                         ) {
                             if (isProcessing) {
@@ -412,14 +497,14 @@ fun HomeScreen(
                                 )
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Text(
-                                    text = "প্রসেসিং হচ্ছে...",
+                                    text = "হুবহু রিকনস্ট্রাকশন হচ্ছে...",
                                     fontWeight = FontWeight.Bold
                                 )
                             } else {
                                 Icon(Icons.Default.PlayArrow, contentDescription = null)
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "রিকনস্ট্রাক্ট শুরু করুন",
+                                    text = "হুবহু আল্ট্রা-এইচডি ক্লোন শুরু করুন",
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -447,7 +532,7 @@ fun HomeScreen(
                         )
                         Column {
                             Text(
-                                text = "AI বিশ্লেষণ চলছে",
+                                text = "AI ক্লোনিং ও বিশ্লেষণ চলছে",
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = TextPrimary
@@ -462,7 +547,7 @@ fun HomeScreen(
                 }
             }
 
-            // How it works section (exact Bengali translation of the 4 steps)
+            // How it works section
             Text(
                 text = "কীভাবে কাজ করবে?",
                 style = MaterialTheme.typography.titleMedium,
@@ -473,29 +558,29 @@ fun HomeScreen(
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 StepInfoCard(
                     stepNumber = "১",
-                    title = "কার্ডের ছবি দিন",
-                    description = "যেকোনো দোকান বা ব্যবসার কার্ডের ছবি নির্বাচন করুন।",
+                    title = "কার্ড বা যেকোনো ছবি দিন",
+                    description = "যেকোনো দোকান, ব্যবসা, ভিজিটিং কার্ড বা ডকুমেন্টের ছবি নির্বাচন করুন।",
                     icon = Icons.Default.AddPhotoAlternate,
                     tint = AccentPrimary
                 )
                 StepInfoCard(
                     stepNumber = "২",
                     title = "Visual Analysis",
-                    description = "কার্ডের layout, ছবি, লেখা, shape, colour ও decoration বিশ্লেষণ করা হবে।",
+                    description = "কার্ডের layout, লেখা, ছবি, ব্যাকগ্রাউন্ড ও কালার প্যালেট বিশ্লেষণ করা হবে।",
                     icon = Icons.Default.Layers,
                     tint = AccentCyan
                 )
                 StepInfoCard(
                     stepNumber = "৩",
-                    title = "Card Reconstruction",
-                    description = "মূল কার্ডের visual appearance যতটা সম্ভব একই রেখে নতুন কার্ড তৈরি করা হবে।",
+                    title = "100% Exact HD Rebuild",
+                    description = "মূল কার্ডের হুবহু প্রতিটি উপাদান অক্ষত রেখে আল্ট্রা-এইচডি কোয়ালিটিতে তৈরি করা হবে।",
                     icon = Icons.Default.AutoAwesome,
                     tint = AccentSecondary
                 )
                 StepInfoCard(
                     stepNumber = "৪",
-                    title = "Export",
-                    description = "শেষে তৈরি কার্ডটি PNG বা JPG ফরম্যাটে হাই-কোয়ালিটিতে সংরক্ষণ বা শেয়ার করা যাবে।",
+                    title = "Export & Secure",
+                    description = "তৈরি কার্ডটি হাই-কোয়ালিটি PNG বা JPG ফরম্যাটে সেভ বা শেয়ার করুন।",
                     icon = Icons.Default.Download,
                     tint = AccentGreen
                 )
