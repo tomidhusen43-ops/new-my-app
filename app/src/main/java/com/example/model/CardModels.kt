@@ -58,7 +58,8 @@ data class InPlaceTextPatch(
     val maskHeightPx: Float = 32f, // Exact height to erase old word
     val textColorHex: String = "#0F172A",
     val bgColorHex: String = "#FFFFFF",
-    val isBold: Boolean = true
+    val isBold: Boolean = true,
+    val fontType: String = "Serif" // "Serif" (Classic Bengali), "Sans" (Modern Clean), "Heading" (Heavy Display)
 )
 
 /**

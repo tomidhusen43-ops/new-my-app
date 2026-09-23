@@ -35,6 +35,10 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FormatColorText
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.Tune
@@ -169,6 +173,9 @@ fun ResultScreen(
         var tempColorHex by remember { mutableStateOf(currentPatch.textColorHex) }
         var tempMaskWidth by remember { mutableFloatStateOf(currentPatch.maskWidthPx) }
         var tempIsBold by remember { mutableStateOf(currentPatch.isBold) }
+        var tempFontType by remember { mutableStateOf(currentPatch.fontType) }
+        var tempXRatio by remember { mutableFloatStateOf(currentPatch.xRatio) }
+        var tempYRatio by remember { mutableFloatStateOf(currentPatch.yRatio) }
 
         AlertDialog(
             onDismissRequest = {
@@ -192,7 +199,7 @@ fun ResultScreen(
                             color = TextPrimary
                         )
                         Text(
-                            text = "কার্ডের ফন্ট সাইজ ও রঙের সাথে স্বয়ংক্রিয়ভাবে মিলানো",
+                            text = "কার্ডের ফন্ট স্টাইল, সাইজ ও রঙের সাথে মিলিয়ে নিখুঁত এডিট",
                             fontSize = 11.sp,
                             color = TextSecondary
                         )
@@ -212,6 +219,35 @@ fun ResultScreen(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
+
+                    // Font Style Selection (Bengali typography)
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("কার্ডের লেখার ধরন (Font Style):", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            val fontStyles = listOf(
+                                "বাংলা ক্লাসিক" to "Serif",
+                                "মডার্ন ক্লিন" to "Sans",
+                                "হেডিং বোল্ড" to "Heading"
+                            )
+                            fontStyles.forEach { (label, type) ->
+                                val isSelected = tempFontType == type
+                                OutlinedButton(
+                                    onClick = { tempFontType = type },
+                                    modifier = Modifier.weight(1f),
+                                    colors = if (isSelected) {
+                                        ButtonDefaults.outlinedButtonColors(containerColor = AccentCyan.copy(alpha = 0.25f))
+                                    } else {
+                                        ButtonDefaults.outlinedButtonColors()
+                                    }
+                                ) {
+                                    Text(label, fontSize = 10.sp, maxLines = 1, color = if (isSelected) AccentCyan else TextSecondary)
+                                }
+                            }
+                        }
+                    }
 
                     // Font Size with presets and slider
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -258,6 +294,29 @@ fun ResultScreen(
                         )
                     }
 
+                    // Position micro-adjustments
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("অবস্থান সূক্ষ্ম সমন্বয় (Position Fine-tune):", fontSize = 12.sp, color = TextSecondary)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(onClick = { tempXRatio = (tempXRatio - 0.005f).coerceIn(0.01f, 0.99f) }) {
+                                Icon(Icons.Default.KeyboardArrowLeft, contentDescription = "Move Left", tint = TextPrimary)
+                            }
+                            IconButton(onClick = { tempYRatio = (tempYRatio - 0.005f).coerceIn(0.01f, 0.99f) }) {
+                                Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Move Up", tint = TextPrimary)
+                            }
+                            IconButton(onClick = { tempYRatio = (tempYRatio + 0.005f).coerceIn(0.01f, 0.99f) }) {
+                                Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Move Down", tint = TextPrimary)
+                            }
+                            IconButton(onClick = { tempXRatio = (tempXRatio + 0.005f).coerceIn(0.01f, 0.99f) }) {
+                                Icon(Icons.Default.KeyboardArrowRight, contentDescription = "Move Right", tint = TextPrimary)
+                            }
+                        }
+                    }
+
                     // Erase Width Slider (strictly fitted)
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Row(
@@ -289,7 +348,8 @@ fun ResultScreen(
                                 "#DC2626", // Bengali Card Title Red
                                 "#1D4ED8", // Navy Blue
                                 "#047857", // Emerald Green
-                                "#B45309"  // Gold / Deep Amber
+                                "#B45309", // Gold / Deep Amber
+                                "#FFFFFF"  // White (for colored badges/circles)
                             ).distinct()
 
                             colorPresets.forEach { hex ->
@@ -315,7 +375,7 @@ fun ResultScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("ফন্ট স্টাইল (Font Style):", fontSize = 12.sp, color = TextSecondary)
+                        Text("ফন্ট ওয়েট (Font Weight):", fontSize = 12.sp, color = TextSecondary)
                         OutlinedButton(
                             onClick = { tempIsBold = !tempIsBold }
                         ) {
@@ -329,11 +389,14 @@ fun ResultScreen(
                     onClick = {
                         val updated = currentPatch.copy(
                             text = tempText,
+                            xRatio = tempXRatio,
+                            yRatio = tempYRatio,
                             fontHeightPx = tempFontHeight,
                             maskWidthPx = tempMaskWidth,
                             maskHeightPx = tempFontHeight + 4f,
                             textColorHex = tempColorHex,
-                            isBold = tempIsBold
+                            isBold = tempIsBold,
+                            fontType = tempFontType
                         )
                         if (isCreatingNewPatch) {
                             inPlacePatches.add(updated)
@@ -352,7 +415,7 @@ fun ResultScreen(
                 }
             },
             dismissButton = {
-                TextButton(
+                OutlinedButton(
                     onClick = {
                         activeEditingPatch = null
                         isCreatingNewPatch = false
@@ -622,34 +685,6 @@ fun ResultScreen(
                                             contentScale = ContentScale.Fit,
                                             modifier = Modifier.fillMaxSize()
                                         )
-
-                                        // Precise indicators directly over edited words with proper density conversion
-                                        val density = androidx.compose.ui.platform.LocalDensity.current
-                                        inPlacePatches.forEach { patch ->
-                                            val xDp = with(density) { (patch.xRatio * containerWidthPx).toDp() - 14.dp }
-                                            val yDp = with(density) { (patch.yRatio * containerHeightPx).toDp() - 14.dp }
-
-                                            Box(
-                                                modifier = Modifier
-                                                    .offset(x = xDp, y = yDp)
-                                                    .size(28.dp)
-                                                    .clip(CircleShape)
-                                                    .background(AccentCyan.copy(alpha = 0.85f))
-                                                    .border(1.5.dp, Color.White, CircleShape)
-                                                    .clickable {
-                                                        isCreatingNewPatch = false
-                                                        activeEditingPatch = patch
-                                                    },
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Edit,
-                                                    contentDescription = "Edit",
-                                                    tint = Color.Black,
-                                                    modifier = Modifier.size(15.dp)
-                                                )
-                                            }
-                                        }
                                     }
                                 }
 

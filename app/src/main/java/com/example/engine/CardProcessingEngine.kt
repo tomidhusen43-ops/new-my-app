@@ -350,7 +350,8 @@ object CardProcessingEngine {
 
     /**
      * Precisely detects the card's native font height, word bounds, text color, and background color at tap point.
-     * Guarantees that replacement text matches the card's exact font size without shrinking or expanding.
+     * Samples the perimeter ring around the tapped area to extract the TRUE background (whether white, blue, red, etc.)
+     * and extracts the ink color and exact stroke height.
      */
     fun detectTextMetricsAtTap(
         bitmap: Bitmap,
@@ -362,90 +363,89 @@ object CardProcessingEngine {
         val cx = (tapXRatio * w).toInt().coerceIn(0, w - 1)
         val cy = (tapYRatio * h).toInt().coerceIn(0, h - 1)
 
-        val winH = min(40, h / 12)
-        val winW = min(70, w / 7)
+        val winH = min(36, max(14, h / 16))
+        val winW = min(60, max(24, w / 9))
 
-        var minLum = 255f
-        var maxLum = 0f
-        var darkColor = Color.BLACK
-        var lightColor = Color.WHITE
+        // 1. Sample boundary pixels to determine TRUE local background
+        var bgR = 0L
+        var bgG = 0L
+        var bgB = 0L
+        var bgCount = 0
 
-        // Sample background and ink colors in local window
-        for (dy in -winH..winH) {
-            val y = (cy + dy).coerceIn(0, h - 1)
-            for (dx in -winW..winW) {
-                val x = (cx + dx).coerceIn(0, w - 1)
-                val pixel = bitmap.getPixel(x, y)
-                val r = (pixel shr 16) and 0xFF
-                val g = (pixel shr 8) and 0xFF
-                val b = pixel and 0xFF
-                val lum = 0.299f * r + 0.587f * g + 0.114f * b
+        val minX = max(0, cx - winW)
+        val maxX = min(w - 1, cx + winW)
+        val minY = max(0, cy - winH)
+        val maxY = min(h - 1, cy + winH)
 
-                if (lum < minLum) {
-                    minLum = lum
-                    darkColor = pixel
-                }
-                if (lum > maxLum) {
-                    maxLum = lum
-                    lightColor = pixel
-                }
-            }
+        for (x in minX..maxX) {
+            val pTop = bitmap.getPixel(x, minY)
+            val pBot = bitmap.getPixel(x, maxY)
+            bgR += (pTop shr 16 and 0xFF) + (pBot shr 16 and 0xFF)
+            bgG += (pTop shr 8 and 0xFF) + (pBot shr 8 and 0xFF)
+            bgB += (pTop and 0xFF) + (pBot and 0xFF)
+            bgCount += 2
+        }
+        for (y in minY..maxY) {
+            val pLeft = bitmap.getPixel(minX, y)
+            val pRight = bitmap.getPixel(maxX, y)
+            bgR += (pLeft shr 16 and 0xFF) + (pRight shr 16 and 0xFF)
+            bgG += (pLeft shr 8 and 0xFF) + (pRight shr 8 and 0xFF)
+            bgB += (pLeft and 0xFF) + (pRight and 0xFF)
+            bgCount += 2
         }
 
-        // Measure text stroke vertical height at this line
-        val bgLum = maxLum
-        val inkDiff = max(18f, (bgLum - minLum) * 0.40f)
+        val avgBgR = (bgR / max(1, bgCount)).toInt()
+        val avgBgG = (bgG / max(1, bgCount)).toInt()
+        val avgBgB = (bgB / max(1, bgCount)).toInt()
+
+        // 2. Identify ink pixels that contrast with the local background
+        var inkR = 0L
+        var inkG = 0L
+        var inkB = 0L
+        var inkCount = 0
+
         var topInk = cy
         var bottomInk = cy
-
-        for (y in cy downTo max(0, cy - winH)) {
-            val pixel = bitmap.getPixel(cx, y)
-            val lum = 0.299f * ((pixel shr 16) and 0xFF) + 0.587f * ((pixel shr 8) and 0xFF) + 0.114f * (pixel and 0xFF)
-            if (bgLum - lum >= inkDiff) {
-                topInk = y
-            } else if (cy - y > 6 && topInk != cy) {
-                break
-            }
-        }
-
-        for (y in cy..min(h - 1, cy + winH)) {
-            val pixel = bitmap.getPixel(cx, y)
-            val lum = 0.299f * ((pixel shr 16) and 0xFF) + 0.587f * ((pixel shr 8) and 0xFF) + 0.114f * (pixel and 0xFF)
-            if (bgLum - lum >= inkDiff) {
-                bottomInk = y
-            } else if (y - cy > 6 && bottomInk != cy) {
-                break
-            }
-        }
-
-        val measuredHeight = (bottomInk - topInk + 4).toFloat().coerceIn(14f, 48f)
-
-        // Measure horizontal word width at this point
         var leftInk = cx
         var rightInk = cx
-        for (x in cx downTo max(0, cx - winW)) {
-            val pixel = bitmap.getPixel(x, cy)
-            val lum = 0.299f * ((pixel shr 16) and 0xFF) + 0.587f * ((pixel shr 8) and 0xFF) + 0.114f * (pixel and 0xFF)
-            if (bgLum - lum >= inkDiff) {
-                leftInk = x
-            } else if (cx - x > 10 && leftInk != cx) {
-                break
+
+        for (y in (cy - winH).coerceAtLeast(0)..(cy + winH).coerceAtMost(h - 1)) {
+            for (x in (cx - winW).coerceAtLeast(0)..(cx + winW).coerceAtMost(w - 1)) {
+                val pixel = bitmap.getPixel(x, y)
+                val pr = (pixel shr 16) and 0xFF
+                val pg = (pixel shr 8) and 0xFF
+                val pb = pixel and 0xFF
+
+                // Color distance from background
+                val dist = Math.abs(pr - avgBgR) + Math.abs(pg - avgBgG) + Math.abs(pb - avgBgB)
+                if (dist > 45) { // Ink pixel detected
+                    inkR += pr
+                    inkG += pg
+                    inkB += pb
+                    inkCount++
+
+                    if (y < topInk) topInk = y
+                    if (y > bottomInk) bottomInk = y
+                    if (x < leftInk) leftInk = x
+                    if (x > rightInk) rightInk = x
+                }
             }
         }
 
-        for (x in cx..min(w - 1, cx + winW)) {
-            val pixel = bitmap.getPixel(x, cy)
-            val lum = 0.299f * ((pixel shr 16) and 0xFF) + 0.587f * ((pixel shr 8) and 0xFF) + 0.114f * (pixel and 0xFF)
-            if (bgLum - lum >= inkDiff) {
-                rightInk = x
-            } else if (x - cx > 10 && rightInk != cx) {
-                break
-            }
+        val finalBgHex = String.format("#%06X", 0xFFFFFF and Color.rgb(avgBgR, avgBgG, avgBgB))
+        val finalInkHex = if (inkCount > 10) {
+            val ir = (inkR / inkCount).toInt()
+            val ig = (inkG / inkCount).toInt()
+            val ib = (inkB / inkCount).toInt()
+            String.format("#%06X", 0xFFFFFF and Color.rgb(ir, ig, ib))
+        } else {
+            // Default high contrast if tap was slightly off-stroke
+            val bgLum = 0.299f * avgBgR + 0.587f * avgBgG + 0.114f * avgBgB
+            if (bgLum > 130) "#0F172A" else "#FFFFFF"
         }
 
-        val measuredWidth = (rightInk - leftInk + 10).toFloat().coerceIn(24f, 240f)
-        val textHex = String.format("#%06X", 0xFFFFFF and darkColor)
-        val bgHex = String.format("#%06X", 0xFFFFFF and lightColor)
+        val measuredHeight = (bottomInk - topInk + 6).toFloat().coerceIn(14f, 42f)
+        val measuredWidth = (rightInk - leftInk + 12).toFloat().coerceIn(24f, 220f)
 
         return com.example.model.InPlaceTextPatch(
             text = "",
@@ -454,16 +454,17 @@ object CardProcessingEngine {
             fontHeightPx = measuredHeight,
             maskWidthPx = measuredWidth,
             maskHeightPx = measuredHeight + 4f,
-            textColorHex = textHex,
-            bgColorHex = bgHex,
-            isBold = true
+            textColorHex = finalInkHex,
+            bgColorHex = finalBgHex,
+            isBold = true,
+            fontType = "Serif"
         )
     }
 
     /**
      * Seamlessly renders In-Place Text Patches.
-     * Erases ONLY the targeted word using sampled local card background color,
-     * and renders the new text matching the exact original card font size, color, and baseline!
+     * Erases the old word using Content-Aware boundary bilinear interpolation (zero visible box lines!),
+     * and renders the new text with authentic card typography, exact color, and proportional size.
      */
     fun renderCardWithInPlacePatches(
         baseBitmap: Bitmap,
@@ -473,54 +474,86 @@ object CardProcessingEngine {
 
         val result = baseBitmap.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(result)
-        val w = result.width.toFloat()
-        val h = result.height.toFloat()
+        val w = result.width
+        val h = result.height
 
         for (patch in patches) {
             if (patch.text.isBlank()) continue
 
-            val cx = patch.xRatio * w
-            val cy = patch.yRatio * h
+            val cx = (patch.xRatio * w).toInt().coerceIn(0, w - 1)
+            val cy = (patch.yRatio * h).toInt().coerceIn(0, h - 1)
 
-            val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            val textPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
                 color = try {
                     Color.parseColor(patch.textColorHex)
                 } catch (_: Exception) {
                     Color.BLACK
                 }
                 textSize = patch.fontHeightPx
-                typeface = if (patch.isBold) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
+                typeface = when (patch.fontType) {
+                    "Serif" -> android.graphics.Typeface.create(android.graphics.Typeface.SERIF, if (patch.isBold) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+                    "Heading" -> android.graphics.Typeface.create("sans-serif-medium", if (patch.isBold) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+                    else -> android.graphics.Typeface.create(android.graphics.Typeface.SANS_SERIF, if (patch.isBold) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+                }
                 textAlign = Paint.Align.CENTER
             }
 
             val textBounds = Rect()
             textPaint.getTextBounds(patch.text, 0, patch.text.length, textBounds)
 
-            // Dynamic mask strictly fitted to the word (never oversized, never covers neighboring text!)
-            val actualMaskW = max(patch.maskWidthPx, textBounds.width().toFloat() + 8f)
-            val actualMaskH = max(patch.maskHeightPx, patch.fontHeightPx + 4f)
+            val maskHalfW = (max(patch.maskWidthPx, textBounds.width().toFloat() + 10f) / 2f).toInt()
+            val maskHalfH = (max(patch.maskHeightPx, patch.fontHeightPx + 4f) / 2f).toInt()
 
-            val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = try {
-                    Color.parseColor(patch.bgColorHex)
-                } catch (_: Exception) {
-                    Color.WHITE
+            val left = (cx - maskHalfW).coerceIn(1, w - 2)
+            val right = (cx + maskHalfW).coerceIn(1, w - 2)
+            val top = (cy - maskHalfH).coerceIn(1, h - 2)
+            val bottom = (cy + maskHalfH).coerceIn(1, h - 2)
+
+            val patchWidth = right - left + 1
+            val patchHeight = bottom - top + 1
+
+            if (patchWidth > 2 && patchHeight > 2) {
+                // 1. Sample boundary colors for seamless interpolation
+                val topBorder = IntArray(patchWidth) { x -> result.getPixel(left + x, top - 1) }
+                val botBorder = IntArray(patchWidth) { x -> result.getPixel(left + x, bottom + 1) }
+                val leftBorder = IntArray(patchHeight) { y -> result.getPixel(left - 1, top + y) }
+                val rightBorder = IntArray(patchHeight) { y -> result.getPixel(right + 1, top + y) }
+
+                val inpaintPixels = IntArray(patchWidth * patchHeight)
+
+                for (y in 0 until patchHeight) {
+                    val ty = y.toFloat() / (patchHeight - 1).coerceAtLeast(1)
+                    val cLeft = leftBorder[y]
+                    val cRight = rightBorder[y]
+
+                    for (x in 0 until patchWidth) {
+                        val tx = x.toFloat() / (patchWidth - 1).coerceAtLeast(1)
+                        val cTop = topBorder[x]
+                        val cBot = botBorder[x]
+
+                        // Bilinear Coons boundary blend
+                        val r1 = (1f - ty) * ((cTop shr 16) and 0xFF) + ty * ((cBot shr 16) and 0xFF)
+                        val g1 = (1f - ty) * ((cTop shr 8) and 0xFF) + ty * ((cBot shr 8) and 0xFF)
+                        val b1 = (1f - ty) * (cTop and 0xFF) + ty * (cBot and 0xFF)
+
+                        val r2 = (1f - tx) * ((cLeft shr 16) and 0xFF) + tx * ((cRight shr 16) and 0xFF)
+                        val g2 = (1f - tx) * ((cLeft shr 8) and 0xFF) + tx * ((cRight shr 8) and 0xFF)
+                        val b2 = (1f - tx) * (cLeft and 0xFF) + tx * (cRight and 0xFF)
+
+                        val blendedR = ((r1 + r2) / 2f).toInt().coerceIn(0, 255)
+                        val blendedG = ((g1 + g2) / 2f).toInt().coerceIn(0, 255)
+                        val blendedB = ((b1 + b2) / 2f).toInt().coerceIn(0, 255)
+
+                        inpaintPixels[y * patchWidth + x] = (0xFF shl 24) or (blendedR shl 16) or (blendedG shl 8) or blendedB
+                    }
                 }
-                style = Paint.Style.FILL
+
+                result.setPixels(inpaintPixels, 0, patchWidth, left, top, patchWidth, patchHeight)
             }
 
-            val patchRect = android.graphics.RectF(
-                cx - actualMaskW / 2f,
-                cy - actualMaskH / 2f,
-                cx + actualMaskW / 2f,
-                cy + actualMaskH / 2f
-            )
-            // Soft rounded mask blending seamlessly into card paper
-            canvas.drawRoundRect(patchRect, 3f, 3f, bgPaint)
-
-            // Draw new text with exact baseline alignment
+            // 2. Render new text with exact matched font and baseline
             val textBaselineY = cy - textBounds.exactCenterY()
-            canvas.drawText(patch.text, cx, textBaselineY, textPaint)
+            canvas.drawText(patch.text, cx.toFloat(), textBaselineY, textPaint)
         }
 
         return result
