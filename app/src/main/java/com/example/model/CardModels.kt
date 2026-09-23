@@ -44,6 +44,21 @@ data class VisualLayer(
 )
 
 /**
+ * In-place editable text element on the card (PDF-style click to edit).
+ */
+data class EditableCardText(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val label: String = "Text",
+    val text: String,
+    val xRatio: Float = 0.5f,
+    val yRatio: Float = 0.5f,
+    val fontSizeSp: Float = 22f,
+    val colorHex: String = "#0F172A",
+    val isBold: Boolean = true,
+    val isVisible: Boolean = true
+)
+
+/**
  * Four corners in normalized coordinates (0.0 to 1.0) for manual perspective correction.
  */
 data class CardCorners(

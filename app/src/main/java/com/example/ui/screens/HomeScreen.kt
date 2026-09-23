@@ -34,7 +34,6 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material.icons.filled.CropRotate
 import androidx.compose.material.icons.filled.Layers
-import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
@@ -72,7 +71,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.engine.CardProcessingEngine
@@ -83,7 +81,6 @@ import com.example.ui.dialogs.SecuritySettingsDialog
 import com.example.ui.theme.AccentCyan
 import com.example.ui.theme.AccentGreen
 import com.example.ui.theme.AccentPrimary
-import com.example.ui.theme.AccentSecondary
 import com.example.ui.theme.DarkBackground
 import com.example.ui.theme.DarkBorder
 import com.example.ui.theme.DarkSurface
@@ -126,9 +123,9 @@ fun HomeScreen(
                 try {
                     val prep = CardProcessingEngine.prepareImage(context, uri)
                     sourceImagePrepared = prep
-                    Toast.makeText(context, "১ম কার্ড সফলভাবে লোড হয়েছে!", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Main Card loaded successfully", Toast.LENGTH_SHORT).show()
                 } catch (e: Exception) {
-                    Toast.makeText(context, "১ম কার্ড লোড ব্যর্থ: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, "Failed to load Main Card: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -142,9 +139,9 @@ fun HomeScreen(
                 try {
                     val prep = CardProcessingEngine.prepareImage(context, uri)
                     sourceImagePrepared = prep
-                    Toast.makeText(context, "১ম কার্ড সফলভাবে লোড হয়েছে!", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Main Card loaded successfully", Toast.LENGTH_SHORT).show()
                 } catch (e: Exception) {
-                    Toast.makeText(context, "১ম কার্ড লোড ব্যর্থ: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, "Failed to load Main Card: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -160,9 +157,9 @@ fun HomeScreen(
                     val prep = CardProcessingEngine.prepareImage(context, uri)
                     templateImagePrepared = prep
                     useDefaultBlankTemplate = false
-                    Toast.makeText(context, "২য় ব্ল্যাঙ্ক ডিজাইন লোড হয়েছে!", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Blank Template loaded successfully", Toast.LENGTH_SHORT).show()
                 } catch (e: Exception) {
-                    Toast.makeText(context, "২য় ডিজাইন লোড ব্যর্থ: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, "Failed to load Blank Template: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -177,9 +174,9 @@ fun HomeScreen(
                     val prep = CardProcessingEngine.prepareImage(context, uri)
                     templateImagePrepared = prep
                     useDefaultBlankTemplate = false
-                    Toast.makeText(context, "২য় ব্ল্যাঙ্ক ডিজাইন লোড হয়েছে!", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Blank Template loaded successfully", Toast.LENGTH_SHORT).show()
                 } catch (e: Exception) {
-                    Toast.makeText(context, "২য় ডিজাইন লোড ব্যর্থ: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, "Failed to load Blank Template: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -203,18 +200,18 @@ fun HomeScreen(
 
     fun startProcessing() {
         val sourcePrep = sourceImagePrepared ?: run {
-            Toast.makeText(context, "দয়া করে ১ম মেইন কার্ড আপলোড করুন!", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Please select the Main Card first", Toast.LENGTH_SHORT).show()
             return
         }
 
         isProcessing = true
         coroutineScope.launch {
             try {
-                currentStepMessage = "১ম কার্ড থেকে সব টেক্সট, নাম, নম্বর ও ফটো আলাদা করা হচ্ছে..."
-                delay(350)
+                currentStepMessage = "Extracting text, logos & photos..."
+                delay(300)
 
-                currentStepMessage = "২য় ব্ল্যাঙ্ক কার্ডের সাথে নিখুঁতভাবে কম্পোজিট ও অ্যালাইন করা হচ্ছে..."
-                delay(400)
+                currentStepMessage = "Comparing designs & matching missing elements..."
+                delay(350)
 
                 val targetTemplateBitmap = templateImagePrepared?.bitmap ?: if (useDefaultBlankTemplate) {
                     CardProcessingEngine.createDefaultBlankTemplate(
@@ -229,7 +226,7 @@ fun HomeScreen(
                     manualCorners = manualCorners
                 )
 
-                currentStepMessage = "সফলভাবে সম্পন্ন হয়েছে!"
+                currentStepMessage = "Reconstruction completed!"
                 delay(200)
 
                 isProcessing = false
@@ -242,7 +239,7 @@ fun HomeScreen(
                 )
             } catch (e: Exception) {
                 isProcessing = false
-                Toast.makeText(context, "প্রসেসিং ব্যর্থ হয়েছে: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "Processing failed: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -281,7 +278,7 @@ fun HomeScreen(
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "ডুয়াল-কার্ড ডিজাইন ও টেক্সট ট্রান্সফার",
+                                text = "Dual-Card Smart Content Transfer",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TextSecondary,
                                 fontSize = 11.sp
@@ -326,7 +323,7 @@ fun HomeScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Instructions Banner
+            // Important Notice in Bengali
             Card(
                 colors = CardDefaults.cardColors(containerColor = DarkSurface),
                 shape = RoundedCornerShape(16.dp),
@@ -337,7 +334,7 @@ fun HomeScreen(
                         Icon(Icons.Default.Layers, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "ডুয়াল-আপলোড কার্ড রিকনস্ট্রাকশন",
+                            text = "Smart Content Transfer",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = AccentCyan
@@ -345,7 +342,7 @@ fun HomeScreen(
                     }
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "১ম বক্সে মেইন কার্ড দিন (যেখান থেকে নাম, লেখা, লোগো ও ছবি নেওয়া হবে) এবং ২য় বক্সে নতুন ব্ল্যাঙ্ক কার্ড বা ব্যাকগ্রাউন্ড দিন। AI ১ম কার্ডের সব উপাদান ২য় কার্ডে নিখুঁতভাবে বসিয়ে দেবে!",
+                        text = "১ম বক্সে আপনার কার্ড দিন এবং ২য় বক্সে নতুন ফাঁকা কার্ডের ডিজাইন দিন। ১ম কার্ডের সব নাম, লেখা ও ছবি ২য় কার্ডে বসে যাবে। ২য় কার্ডে যে ডিজাইন আগে থেকেই আছে তা ডাবল বসবে না।",
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary,
                         lineHeight = 18.sp
@@ -376,18 +373,18 @@ fun HomeScreen(
                                     .background(AccentPrimary.copy(alpha = 0.2f)),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("১", color = AccentPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text("1", color = AccentPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                             }
                             Spacer(modifier = Modifier.width(10.dp))
                             Column {
                                 Text(
-                                    text = "মূল কার্ড (Main Card)",
+                                    text = "Main Card (Source)",
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = TextPrimary
                                 )
                                 Text(
-                                    text = "যে কার্ডের টেক্সট, নাম, নম্বর ও ছবি নিতে চান",
+                                    text = "যে কার্ডে সব টেক্সট, নাম ও ফটো আছে",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = TextMuted,
                                     fontSize = 11.sp
@@ -404,7 +401,6 @@ fun HomeScreen(
 
                     val src = sourceImagePrepared
                     if (src == null) {
-                        // Upload Box for Slot 1
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -418,12 +414,11 @@ fun HomeScreen(
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, tint = AccentPrimary, modifier = Modifier.size(36.dp))
                                 Spacer(modifier = Modifier.height(8.dp))
-                                Text("১ম কার্ডের ছবি নির্বাচন করুন", fontWeight = FontWeight.SemiBold, color = TextPrimary, fontSize = 14.sp)
-                                Text("গ্যালারি থেকে মূল কার্ড নির্বাচন করুন", color = TextSecondary, fontSize = 11.sp)
+                                Text("Select Main Card", fontWeight = FontWeight.SemiBold, color = TextPrimary, fontSize = 14.sp)
+                                Text("Pick card image with text & photos", color = TextSecondary, fontSize = 11.sp)
                             }
                         }
                     } else {
-                        // Preview for Slot 1
                         val bmp = src.bitmap
                         val imageBitmap = remember(bmp) { bmp.asImageBitmap() }
                         Box(
@@ -457,7 +452,7 @@ fun HomeScreen(
                             ) {
                                 Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("পরিবর্তন", fontSize = 12.sp)
+                                Text("Change", fontSize = 12.sp)
                             }
 
                             FilledTonalButton(
@@ -466,7 +461,7 @@ fun HomeScreen(
                             ) {
                                 Icon(Icons.Default.CropRotate, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("কোণ ক্রপ / সোজা", fontSize = 12.sp)
+                                Text("Crop & Straighten", fontSize = 12.sp)
                             }
                         }
                     }
@@ -496,18 +491,18 @@ fun HomeScreen(
                                     .background(AccentCyan.copy(alpha = 0.2f)),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("২", color = AccentCyan, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text("2", color = AccentCyan, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                             }
                             Spacer(modifier = Modifier.width(10.dp))
                             Column {
                                 Text(
-                                    text = "নতুন ব্ল্যাঙ্ক কার্ড বা ব্যাকগ্রাউন্ড",
+                                    text = "Blank Template Card",
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = TextPrimary
                                 )
                                 Text(
-                                    text = "যে কার্ডে লেখা ও ছবি নেই, কেবল ফাঁকা ডিজাইন",
+                                    text = "ফাঁকা ডিজাইন করা কার্ড (টেক্সট ছাড়া)",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = TextMuted,
                                     fontSize = 11.sp
@@ -524,7 +519,6 @@ fun HomeScreen(
 
                     val tmpl = templateImagePrepared
                     if (tmpl == null && !useDefaultBlankTemplate) {
-                        // Upload Box for Slot 2
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -538,26 +532,24 @@ fun HomeScreen(
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Icon(Icons.Default.Style, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(36.dp))
                                 Spacer(modifier = Modifier.height(8.dp))
-                                Text("২য় ব্ল্যাঙ্ক ডিজাইন ছবি নির্বাচন করুন", fontWeight = FontWeight.SemiBold, color = TextPrimary, fontSize = 14.sp)
-                                Text("গ্যালারি থেকে ফাঁকা কার্ড সিলেক্ট করুন", color = TextSecondary, fontSize = 11.sp)
+                                Text("Select Blank Template", fontWeight = FontWeight.SemiBold, color = TextPrimary, fontSize = 14.sp)
+                                Text("Pick blank design template image", color = TextSecondary, fontSize = 11.sp)
                             }
                         }
 
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        // Quick Button for White Card
                         OutlinedButton(
                             onClick = {
                                 useDefaultBlankTemplate = true
                                 templateImagePrepared = null
-                                Toast.makeText(context, "ডিফল্ট ক্লিন হোয়াইট কার্ড নির্বাচিত!", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Default clean white card selected", Toast.LENGTH_SHORT).show()
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("বা সাদা ব্ল্যাঙ্ক কার্ড ব্যবহার করুন", fontSize = 12.sp, color = TextSecondary)
+                            Text("Or Use Clean White Canvas", fontSize = 12.sp, color = TextSecondary)
                         }
                     } else if (tmpl != null) {
-                        // Preview for Slot 2
                         val bmp = tmpl.bitmap
                         val imageBitmap = remember(bmp) { bmp.asImageBitmap() }
                         Box(
@@ -587,10 +579,9 @@ fun HomeScreen(
                         ) {
                             Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("অন্য ফাঁকা ডিজাইন দিন", fontSize = 12.sp)
+                            Text("Change Template", fontSize = 12.sp)
                         }
                     } else {
-                        // Using Default White Blank Template
                         Surface(
                             color = DarkSurfaceVariant,
                             shape = RoundedCornerShape(12.dp),
@@ -601,9 +592,9 @@ fun HomeScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("ডিফল্ট সাদা ফ্রেশ কার্ড নির্বাচন করা আছে", color = AccentGreen, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                Text("Clean White Canvas selected", color = AccentGreen, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                                 OutlinedButton(onClick = { openTemplatePicker() }) {
-                                    Text("ছবি আপলোড করুন", fontSize = 11.sp)
+                                    Text("Upload Custom", fontSize = 11.sp)
                                 }
                             }
                         }
@@ -611,7 +602,7 @@ fun HomeScreen(
                 }
             }
 
-            // Processing progress banner
+            // Processing Indicator
             AnimatedVisibility(visible = isProcessing) {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = DarkSurfaceVariant),
@@ -630,7 +621,7 @@ fun HomeScreen(
                         )
                         Column {
                             Text(
-                                text = "AI ট্রান্সফার ও রিকনস্ট্রাকশন চলছে",
+                                text = "AI Processing",
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = TextPrimary
@@ -658,14 +649,14 @@ fun HomeScreen(
                 if (isProcessing) {
                     CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("কাজ সম্পন্ন হচ্ছে...", fontWeight = FontWeight.Bold)
+                    Text("Processing...", fontWeight = FontWeight.Bold)
                 } else {
                     Icon(Icons.Default.PlayArrow, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "১ম কার্ডের সব টেক্সট ও ফটো ২য় কার্ডে নিখুঁতভাবে বসান",
+                        text = "Transfer Content to Target Card",
                         fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp
+                        fontSize = 14.sp
                     )
                 }
             }

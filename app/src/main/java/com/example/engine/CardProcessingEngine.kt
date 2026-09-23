@@ -182,10 +182,11 @@ object CardProcessingEngine {
     }
 
     /**
-     * Extracts all text, numbers, photos, logos, and graphics from the source card as a transparent layer.
-     * Removes the plain background while preserving all colored and dark elements with anti-aliased alpha.
+     * Extracts text, numbers, photos, logos, and graphics from the source card.
+     * SMART DIFF: If a 2nd template card is provided and already has identical design/border elements,
+     * it prevents duplicate rendering so only missing text and unique elements are transferred!
      */
-    fun extractForegroundElements(cardBitmap: Bitmap): Bitmap {
+    fun extractForegroundElements(cardBitmap: Bitmap, templateBitmap: Bitmap? = null): Bitmap {
         val w = cardBitmap.width
         val h = cardBitmap.height
         val output = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
@@ -193,6 +194,15 @@ object CardProcessingEngine {
         val pixels = IntArray(w * h)
         cardBitmap.getPixels(pixels, 0, w, 0, 0, w, h)
         val outPixels = IntArray(w * h)
+
+        // Template pixels if provided (for smart diff checking)
+        val tmplPixels = if (templateBitmap != null) {
+            val scaledTmpl = Bitmap.createScaledBitmap(templateBitmap, w, h, true)
+            val tp = IntArray(w * h)
+            scaledTmpl.getPixels(tp, 0, w, 0, 0, w, h)
+            if (scaledTmpl != templateBitmap) scaledTmpl.recycle()
+            tp
+        } else null
 
         // 1. Sample background color from outer borders
         val borderPad = max(2, min(15, (min(w, h) * 0.02f).toInt()))
@@ -238,7 +248,7 @@ object CardProcessingEngine {
             val minC = min(r, min(g, b))
             val saturation = maxC - minC
 
-            val alpha: Int
+            var alpha: Int
             if (diff < minThreshold && saturation < 18) {
                 alpha = 0 // Pure background -> Transparent
             } else if (diff >= maxThreshold || saturation >= 32) {
@@ -251,11 +261,116 @@ object CardProcessingEngine {
                 alpha = (blended * 255.0).toInt().coerceIn(0, 255)
             }
 
+            // SMART DIFF SUBTRACTION:
+            // If the 2nd template card already has this design/color at pixel i,
+            // do not duplicate it! Let the template's clean native design show.
+            if (alpha > 0 && tmplPixels != null) {
+                val tp = tmplPixels[i]
+                val tr = (tp shr 16) and 0xFF
+                val tg = (tp shr 8) and 0xFF
+                val tb = tp and 0xFF
+                val diffFromTemplate = abs(r - tr) + abs(g - tg) + abs(b - tb)
+                if (diffFromTemplate < 32) {
+                    alpha = 0 // Design already exists in target template
+                }
+            }
+
             outPixels[i] = (alpha shl 24) or (r shl 16) or (g shl 8) or b
         }
 
         output.setPixels(outPixels, 0, w, 0, 0, w, h)
         return output
+    }
+
+    /**
+     * Renders user text edits (PDF-style in-place editing) on top of the card.
+     */
+    fun renderCardWithTextEdits(
+        baseBitmap: Bitmap,
+        textList: List<com.example.model.EditableCardText>
+    ): Bitmap {
+        val activeTexts = textList.filter { it.isVisible && it.text.isNotBlank() }
+        if (activeTexts.isEmpty()) return baseBitmap
+
+        val result = baseBitmap.copy(Bitmap.Config.ARGB_8888, true)
+        val canvas = Canvas(result)
+        val w = result.width.toFloat()
+        val h = result.height.toFloat()
+        val scaleFactor = h / 700f
+
+        for (item in activeTexts) {
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = try {
+                    Color.parseColor(item.colorHex)
+                } catch (_: Exception) {
+                    Color.BLACK
+                }
+                textSize = item.fontSizeSp * 2.2f * scaleFactor
+                typeface = if (item.isBold) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
+                textAlign = Paint.Align.CENTER
+            }
+
+            val textBounds = Rect()
+            paint.getTextBounds(item.text, 0, item.text.length, textBounds)
+            val posX = item.xRatio * w
+            val posY = item.yRatio * h
+
+            val padX = 16f * scaleFactor
+            val padY = 8f * scaleFactor
+            val maskPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.WHITE
+                style = Paint.Style.FILL
+            }
+
+            val bgRect = android.graphics.RectF(
+                posX + textBounds.left - padX,
+                posY + textBounds.top - padY,
+                posX + textBounds.right + padX,
+                posY + textBounds.bottom + padY
+            )
+            canvas.drawRoundRect(bgRect, 8f * scaleFactor, 8f * scaleFactor, maskPaint)
+            canvas.drawText(item.text, posX, posY, paint)
+        }
+
+        return result
+    }
+
+    fun getDefaultDetectedTexts(): List<com.example.model.EditableCardText> {
+        return listOf(
+            com.example.model.EditableCardText(
+                id = "title_text",
+                label = "Title / Brand Name (যেমন: ZILZAL)",
+                text = "ZILZAL",
+                xRatio = 0.50f,
+                yRatio = 0.40f,
+                fontSizeSp = 26f,
+                colorHex = "#DC2626",
+                isBold = true,
+                isVisible = false
+            ),
+            com.example.model.EditableCardText(
+                id = "name_text",
+                label = "Proprietor / Name (পরিচালনায়)",
+                text = "মোঃ শাহীন খান",
+                xRatio = 0.28f,
+                yRatio = 0.16f,
+                fontSizeSp = 17f,
+                colorHex = "#1E293B",
+                isBold = true,
+                isVisible = false
+            ),
+            com.example.model.EditableCardText(
+                id = "phone_text",
+                label = "Phone / Mobile Number",
+                text = "০১...",
+                xRatio = 0.78f,
+                yRatio = 0.16f,
+                fontSizeSp = 16f,
+                colorHex = "#0F172A",
+                isBold = true,
+                isVisible = false
+            )
+        )
     }
 
     /**
@@ -377,8 +492,8 @@ object CardProcessingEngine {
             Pair(false, originalBitmap.copy(Bitmap.Config.ARGB_8888, true))
         }
 
-        // 2. Extract foreground elements (Text, Photos, Numbers, Logos)
-        val extractedForeground = extractForegroundElements(cardBitmap)
+        // 2. Extract foreground elements with smart diff (skips elements that target template already has)
+        val extractedForeground = extractForegroundElements(cardBitmap, templateBitmap)
 
         // 3. Resolve target blank template
         val targetTemplate = templateBitmap ?: createDefaultBlankTemplate(
