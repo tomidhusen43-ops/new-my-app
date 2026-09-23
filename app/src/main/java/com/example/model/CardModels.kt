@@ -45,17 +45,17 @@ data class VisualLayer(
 
 /**
  * In-place editable text patch directly tapped on the card.
- * Seamlessly covers the old text using sampled background color and renders
- * the new text matching the card's original color, font size, and style.
+ * Seamlessly covers ONLY the specific old word using sampled background color and renders
+ * the new text matching the card's original color, exact font size, and style.
  */
 data class InPlaceTextPatch(
     val id: String = java.util.UUID.randomUUID().toString(),
     val text: String,
     val xRatio: Float, // Center X ratio (0.0 to 1.0)
     val yRatio: Float, // Center Y ratio (0.0 to 1.0)
-    val widthRatio: Float = 0.28f, // Background mask width
-    val heightRatio: Float = 0.07f, // Background mask height
-    val fontSizeSp: Float = 17f,
+    val fontHeightPx: Float = 26f, // Exact text height in bitmap pixels
+    val maskWidthPx: Float = 100f, // Exact width to erase old word
+    val maskHeightPx: Float = 32f, // Exact height to erase old word
     val textColorHex: String = "#0F172A",
     val bgColorHex: String = "#FFFFFF",
     val isBold: Boolean = true

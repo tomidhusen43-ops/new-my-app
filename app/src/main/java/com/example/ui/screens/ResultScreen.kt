@@ -165,10 +165,9 @@ fun ResultScreen(
     // Interactive In-Place Edit Dialog: Opened by tapping directly on the card
     activeEditingPatch?.let { currentPatch ->
         var tempText by remember { mutableStateOf(currentPatch.text) }
-        var tempFontSize by remember { mutableFloatStateOf(currentPatch.fontSizeSp) }
+        var tempFontHeight by remember { mutableFloatStateOf(currentPatch.fontHeightPx) }
         var tempColorHex by remember { mutableStateOf(currentPatch.textColorHex) }
-        var tempWidthRatio by remember { mutableFloatStateOf(currentPatch.widthRatio) }
-        var tempHeightRatio by remember { mutableFloatStateOf(currentPatch.heightRatio) }
+        var tempMaskWidth by remember { mutableFloatStateOf(currentPatch.maskWidthPx) }
         var tempIsBold by remember { mutableStateOf(currentPatch.isBold) }
 
         AlertDialog(
@@ -178,91 +177,135 @@ fun ResultScreen(
             },
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.TouchApp, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(22.dp))
+                    Icon(
+                        imageVector = Icons.Default.TouchApp,
+                        contentDescription = null,
+                        tint = AccentCyan,
+                        modifier = Modifier.size(24.dp)
+                    )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(text = "Tap-to-Edit Card Text", fontWeight = FontWeight.Bold)
+                    Column {
+                        Text(
+                            text = "কার্ডের লেখা পরিবর্তন (Edit Text)",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp,
+                            color = TextPrimary
+                        )
+                        Text(
+                            text = "কার্ডের ফন্ট সাইজ ও রঙের সাথে স্বয়ংক্রিয়ভাবে মিলানো",
+                            fontSize = 11.sp,
+                            color = TextSecondary
+                        )
+                    }
                 }
             },
             text = {
                 Column(
                     modifier = Modifier.verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    Text(
-                        text = "Notice: কার্ডের আগের লেখা (তারিখ, নাম বা নম্বর) মুছে নতুন লেখা বসবে। কার্ডের ফন্ট ও রঙের সাথে মিলিয়ে নিখুঁতভাবে তৈরি হবে।",
-                        fontSize = 11.sp,
-                        color = AccentCyan,
-                        lineHeight = 16.sp
-                    )
-
                     OutlinedTextField(
                         value = tempText,
                         onValueChange = { tempText = it },
-                        label = { Text("Enter New Text (নতুন লেখা)") },
-                        placeholder = { Text("e.g. নতুন তারিখ, নাম বা নম্বর") },
+                        label = { Text("নতুন লেখা টাইপ করুন (New Text)") },
+                        placeholder = { Text("e.g. নতুন তারিখ, নাম বা মোবাইল নম্বর") },
+                        singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    // Font Size Slider
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Font Size", fontSize = 12.sp, color = TextSecondary)
-                        Text("${tempFontSize.toInt()} sp", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = AccentCyan)
-                    }
-                    Slider(
-                        value = tempFontSize,
-                        onValueChange = { tempFontSize = it },
-                        valueRange = 10f..44f,
-                        colors = SliderDefaults.colors(thumbColor = AccentCyan, activeTrackColor = AccentCyan)
-                    )
+                    // Font Size with presets and slider
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("লেখার সাইজ (Font Size):", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                            Text("${tempFontHeight.toInt()} px", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = AccentCyan)
+                        }
 
-                    // Mask Coverage Width
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Erase Box Width", fontSize = 12.sp, color = TextSecondary)
-                        Text("${(tempWidthRatio * 100).toInt()}%", fontSize = 12.sp, color = TextSecondary)
+                        // Quick size presets
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            val presets = listOf(
+                                "ছোট (16px)" to 16f,
+                                "মাঝারি (24px)" to 24f,
+                                "বড় (34px)" to 34f
+                            )
+                            presets.forEach { (label, size) ->
+                                val isSelected = (tempFontHeight - size).let { it >= -2f && it <= 2f }
+                                OutlinedButton(
+                                    onClick = { tempFontHeight = size },
+                                    modifier = Modifier.weight(1f),
+                                    colors = if (isSelected) {
+                                        ButtonDefaults.outlinedButtonColors(containerColor = AccentCyan.copy(alpha = 0.15f))
+                                    } else {
+                                        ButtonDefaults.outlinedButtonColors()
+                                    }
+                                ) {
+                                    Text(label, fontSize = 10.sp, maxLines = 1)
+                                }
+                            }
+                        }
+
+                        Slider(
+                            value = tempFontHeight,
+                            onValueChange = { tempFontHeight = it },
+                            valueRange = 12f..52f,
+                            colors = SliderDefaults.colors(thumbColor = AccentCyan, activeTrackColor = AccentCyan)
+                        )
                     }
-                    Slider(
-                        value = tempWidthRatio,
-                        onValueChange = { tempWidthRatio = it },
-                        valueRange = 0.08f..0.70f
-                    )
+
+                    // Erase Width Slider (strictly fitted)
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("আগের লেখা মোছার বক্স (Erase Width):", fontSize = 12.sp, color = TextSecondary)
+                            Text("${tempMaskWidth.toInt()} px", fontSize = 12.sp, color = TextSecondary)
+                        }
+                        Slider(
+                            value = tempMaskWidth,
+                            onValueChange = { tempMaskWidth = it },
+                            valueRange = 25f..280f,
+                            colors = SliderDefaults.colors(thumbColor = AccentPrimary, activeTrackColor = AccentPrimary)
+                        )
+                    }
 
                     // Matched Color Palette
-                    Text("Font Color (স্বয়ংক্রিয় কালার ম্যাচ):", fontSize = 12.sp, color = TextSecondary)
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        // Include sampled color as first option
-                        val colorPresets = listOf(
-                            currentPatch.textColorHex,
-                            "#0F172A", // Deep Navy Black
-                            "#DC2626", // Bengali Card Bold Red
-                            "#2563EB", // Royal Blue
-                            "#059669", // Emerald Green
-                            "#D97706"  // Gold / Bronze
-                        ).distinct()
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("কার্ডের আসল রঙ (Font Color Match):", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            val colorPresets = listOf(
+                                currentPatch.textColorHex, // Sampled from card
+                                "#0F172A", // Black / Dark Slate
+                                "#DC2626", // Bengali Card Title Red
+                                "#1D4ED8", // Navy Blue
+                                "#047857", // Emerald Green
+                                "#B45309"  // Gold / Deep Amber
+                            ).distinct()
 
-                        colorPresets.forEach { hex ->
-                            Box(
-                                modifier = Modifier
-                                    .size(30.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(android.graphics.Color.parseColor(hex)))
-                                    .border(
-                                        width = if (tempColorHex.equals(hex, ignoreCase = true)) 2.5.dp else 1.dp,
-                                        color = if (tempColorHex.equals(hex, ignoreCase = true)) Color.White else Color.Transparent,
-                                        shape = CircleShape
-                                    )
-                                    .clickable { tempColorHex = hex }
-                            )
+                            colorPresets.forEach { hex ->
+                                Box(
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(android.graphics.Color.parseColor(hex)))
+                                        .border(
+                                            width = if (tempColorHex.equals(hex, ignoreCase = true)) 3.dp else 1.dp,
+                                            color = if (tempColorHex.equals(hex, ignoreCase = true)) Color.White else DarkBorder,
+                                            shape = CircleShape
+                                        )
+                                        .clickable { tempColorHex = hex }
+                                )
+                            }
                         }
                     }
 
@@ -272,11 +315,11 @@ fun ResultScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Bold Font", fontSize = 12.sp, color = TextSecondary)
+                        Text("ফন্ট স্টাইল (Font Style):", fontSize = 12.sp, color = TextSecondary)
                         OutlinedButton(
                             onClick = { tempIsBold = !tempIsBold }
                         ) {
-                            Text(if (tempIsBold) "Bold (বোল্ড)" else "Regular (নরমাল)", fontSize = 11.sp)
+                            Text(if (tempIsBold) "বোল্ড (Bold)" else "নরমাল (Regular)", fontSize = 11.sp)
                         }
                     }
                 }
@@ -286,10 +329,10 @@ fun ResultScreen(
                     onClick = {
                         val updated = currentPatch.copy(
                             text = tempText,
-                            fontSizeSp = tempFontSize,
+                            fontHeightPx = tempFontHeight,
+                            maskWidthPx = tempMaskWidth,
+                            maskHeightPx = tempFontHeight + 4f,
                             textColorHex = tempColorHex,
-                            widthRatio = tempWidthRatio,
-                            heightRatio = tempHeightRatio,
                             isBold = tempIsBold
                         )
                         if (isCreatingNewPatch) {
@@ -305,7 +348,7 @@ fun ResultScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = AccentPrimary)
                 ) {
-                    Text("Apply & Replace Text")
+                    Text("Apply & Replace")
                 }
             },
             dismissButton = {
@@ -562,26 +605,13 @@ fun ResultScreen(
                                                         isCreatingNewPatch = false
                                                         activeEditingPatch = existing
                                                     } else {
-                                                        // Sample color around the tap
-                                                        val (textHex, bgHex) = CardProcessingEngine.sampleTextAndBackgroundColors(
+                                                        val detected = CardProcessingEngine.detectTextMetricsAtTap(
                                                             finalDisplayBitmap,
                                                             tapXRatio,
                                                             tapYRatio
                                                         )
-
-                                                        val newPatch = InPlaceTextPatch(
-                                                            text = "",
-                                                            xRatio = tapXRatio,
-                                                            yRatio = tapYRatio,
-                                                            widthRatio = 0.28f,
-                                                            heightRatio = 0.07f,
-                                                            fontSizeSp = 18f,
-                                                            textColorHex = textHex,
-                                                            bgColorHex = bgHex,
-                                                            isBold = true
-                                                        )
                                                         isCreatingNewPatch = true
-                                                        activeEditingPatch = newPatch
+                                                        activeEditingPatch = detected
                                                     }
                                                 }
                                             }
@@ -593,35 +623,31 @@ fun ResultScreen(
                                             modifier = Modifier.fillMaxSize()
                                         )
 
-                                        // Subtle indicators on active edited areas
+                                        // Precise indicators directly over edited words with proper density conversion
+                                        val density = androidx.compose.ui.platform.LocalDensity.current
                                         inPlacePatches.forEach { patch ->
+                                            val xDp = with(density) { (patch.xRatio * containerWidthPx).toDp() - 14.dp }
+                                            val yDp = with(density) { (patch.yRatio * containerHeightPx).toDp() - 14.dp }
+
                                             Box(
                                                 modifier = Modifier
-                                                    .fillMaxSize()
+                                                    .offset(x = xDp, y = yDp)
+                                                    .size(28.dp)
+                                                    .clip(CircleShape)
+                                                    .background(AccentCyan.copy(alpha = 0.85f))
+                                                    .border(1.5.dp, Color.White, CircleShape)
+                                                    .clickable {
+                                                        isCreatingNewPatch = false
+                                                        activeEditingPatch = patch
+                                                    },
+                                                contentAlignment = Alignment.Center
                                             ) {
-                                                val posX = (patch.xRatio * containerWidthPx) - 16.dp.value
-                                                val posY = (patch.yRatio * containerHeightPx) - 16.dp.value
-
-                                                Box(
-                                                    modifier = Modifier
-                                                        .offset(x = posX.dp, y = posY.dp)
-                                                        .size(32.dp)
-                                                        .clip(CircleShape)
-                                                        .background(AccentCyan.copy(alpha = 0.25f))
-                                                        .border(1.dp, AccentCyan, CircleShape)
-                                                        .clickable {
-                                                            isCreatingNewPatch = false
-                                                            activeEditingPatch = patch
-                                                        },
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Edit,
-                                                        contentDescription = null,
-                                                        tint = Color.White,
-                                                        modifier = Modifier.size(16.dp)
-                                                    )
-                                                }
+                                                Icon(
+                                                    imageVector = Icons.Default.Edit,
+                                                    contentDescription = "Edit",
+                                                    tint = Color.Black,
+                                                    modifier = Modifier.size(15.dp)
+                                                )
                                             }
                                         }
                                     }

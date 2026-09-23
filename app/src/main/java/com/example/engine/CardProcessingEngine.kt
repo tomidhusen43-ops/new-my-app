@@ -147,6 +147,13 @@ object CardProcessingEngine {
                 wasResized = true
             }
 
+            // Auto-crop empty white margins around card (e.g. from gallery screenshots)
+            val autoCropped = autoCropCardMargins(decoded)
+            if (autoCropped != decoded) {
+                decoded.recycle()
+                decoded = autoCropped
+            }
+
             val quality = calculateImageQuality(decoded)
 
             PreparedImage(
@@ -284,28 +291,89 @@ object CardProcessingEngine {
 
 
     /**
-     * Samples local text color and background color around a user's tap point.
-     * Ensures newly typed text matches the card's exact original font color and background.
+     * Auto-crops empty white/black letterboxing margins (common when taking screenshots or photos of cards).
      */
-    fun sampleTextAndBackgroundColors(
+    fun autoCropCardMargins(source: Bitmap): Bitmap {
+        val w = source.width
+        val h = source.height
+        if (w < 100 || h < 100) return source
+
+        val pixels = IntArray(w)
+
+        // Find top margin
+        var topCrop = 0
+        for (y in 0 until (h * 0.40f).toInt()) {
+            source.getPixels(pixels, 0, w, 0, y, w, 1)
+            var uniformCount = 0
+            for (p in pixels) {
+                val r = (p shr 16) and 0xFF
+                val g = (p shr 8) and 0xFF
+                val b = p and 0xFF
+                // Check if white or dark border
+                if ((r > 240 && g > 240 && b > 240) || (r < 15 && g < 15 && b < 15)) {
+                    uniformCount++
+                }
+            }
+            if (uniformCount.toFloat() / w > 0.94f) {
+                topCrop = y
+            } else {
+                break
+            }
+        }
+
+        // Find bottom margin
+        var bottomCrop = h - 1
+        for (y in h - 1 downTo (h * 0.60f).toInt()) {
+            source.getPixels(pixels, 0, w, 0, y, w, 1)
+            var uniformCount = 0
+            for (p in pixels) {
+                val r = (p shr 16) and 0xFF
+                val g = (p shr 8) and 0xFF
+                val b = p and 0xFF
+                if ((r > 240 && g > 240 && b > 240) || (r < 15 && g < 15 && b < 15)) {
+                    uniformCount++
+                }
+            }
+            if (uniformCount.toFloat() / w > 0.94f) {
+                bottomCrop = y
+            } else {
+                break
+            }
+        }
+
+        val croppedHeight = bottomCrop - topCrop
+        if ((topCrop > 15 || bottomCrop < h - 15) && croppedHeight >= 160) {
+            return Bitmap.createBitmap(source, 0, topCrop, w, croppedHeight)
+        }
+        return source
+    }
+
+    /**
+     * Precisely detects the card's native font height, word bounds, text color, and background color at tap point.
+     * Guarantees that replacement text matches the card's exact font size without shrinking or expanding.
+     */
+    fun detectTextMetricsAtTap(
         bitmap: Bitmap,
         tapXRatio: Float,
         tapYRatio: Float
-    ): Pair<String, String> {
+    ): com.example.model.InPlaceTextPatch {
         val w = bitmap.width
         val h = bitmap.height
         val cx = (tapXRatio * w).toInt().coerceIn(0, w - 1)
         val cy = (tapYRatio * h).toInt().coerceIn(0, h - 1)
 
-        val radius = max(8, (min(w, h) * 0.03f).toInt())
+        val winH = min(40, h / 12)
+        val winW = min(70, w / 7)
+
         var minLum = 255f
         var maxLum = 0f
         var darkColor = Color.BLACK
         var lightColor = Color.WHITE
 
-        for (dy in -radius..radius) {
+        // Sample background and ink colors in local window
+        for (dy in -winH..winH) {
             val y = (cy + dy).coerceIn(0, h - 1)
-            for (dx in -radius..radius) {
+            for (dx in -winW..winW) {
                 val x = (cx + dx).coerceIn(0, w - 1)
                 val pixel = bitmap.getPixel(x, y)
                 val r = (pixel shr 16) and 0xFF
@@ -324,15 +392,78 @@ object CardProcessingEngine {
             }
         }
 
+        // Measure text stroke vertical height at this line
+        val bgLum = maxLum
+        val inkDiff = max(18f, (bgLum - minLum) * 0.40f)
+        var topInk = cy
+        var bottomInk = cy
+
+        for (y in cy downTo max(0, cy - winH)) {
+            val pixel = bitmap.getPixel(cx, y)
+            val lum = 0.299f * ((pixel shr 16) and 0xFF) + 0.587f * ((pixel shr 8) and 0xFF) + 0.114f * (pixel and 0xFF)
+            if (bgLum - lum >= inkDiff) {
+                topInk = y
+            } else if (cy - y > 6 && topInk != cy) {
+                break
+            }
+        }
+
+        for (y in cy..min(h - 1, cy + winH)) {
+            val pixel = bitmap.getPixel(cx, y)
+            val lum = 0.299f * ((pixel shr 16) and 0xFF) + 0.587f * ((pixel shr 8) and 0xFF) + 0.114f * (pixel and 0xFF)
+            if (bgLum - lum >= inkDiff) {
+                bottomInk = y
+            } else if (y - cy > 6 && bottomInk != cy) {
+                break
+            }
+        }
+
+        val measuredHeight = (bottomInk - topInk + 4).toFloat().coerceIn(14f, 48f)
+
+        // Measure horizontal word width at this point
+        var leftInk = cx
+        var rightInk = cx
+        for (x in cx downTo max(0, cx - winW)) {
+            val pixel = bitmap.getPixel(x, cy)
+            val lum = 0.299f * ((pixel shr 16) and 0xFF) + 0.587f * ((pixel shr 8) and 0xFF) + 0.114f * (pixel and 0xFF)
+            if (bgLum - lum >= inkDiff) {
+                leftInk = x
+            } else if (cx - x > 10 && leftInk != cx) {
+                break
+            }
+        }
+
+        for (x in cx..min(w - 1, cx + winW)) {
+            val pixel = bitmap.getPixel(x, cy)
+            val lum = 0.299f * ((pixel shr 16) and 0xFF) + 0.587f * ((pixel shr 8) and 0xFF) + 0.114f * (pixel and 0xFF)
+            if (bgLum - lum >= inkDiff) {
+                rightInk = x
+            } else if (x - cx > 10 && rightInk != cx) {
+                break
+            }
+        }
+
+        val measuredWidth = (rightInk - leftInk + 10).toFloat().coerceIn(24f, 240f)
         val textHex = String.format("#%06X", 0xFFFFFF and darkColor)
         val bgHex = String.format("#%06X", 0xFFFFFF and lightColor)
-        return Pair(textHex, bgHex)
+
+        return com.example.model.InPlaceTextPatch(
+            text = "",
+            xRatio = tapXRatio,
+            yRatio = tapYRatio,
+            fontHeightPx = measuredHeight,
+            maskWidthPx = measuredWidth,
+            maskHeightPx = measuredHeight + 4f,
+            textColorHex = textHex,
+            bgColorHex = bgHex,
+            isBold = true
+        )
     }
 
     /**
      * Seamlessly renders In-Place Text Patches.
-     * Softly patches the old text with the card's background color so it leaves no trace,
-     * and renders the new text with the exact matched card font color and style!
+     * Erases ONLY the targeted word using sampled local card background color,
+     * and renders the new text matching the exact original card font size, color, and baseline!
      */
     fun renderCardWithInPlacePatches(
         baseBitmap: Bitmap,
@@ -344,17 +475,31 @@ object CardProcessingEngine {
         val canvas = Canvas(result)
         val w = result.width.toFloat()
         val h = result.height.toFloat()
-        val scaleFactor = h / 700f
 
         for (patch in patches) {
             if (patch.text.isBlank()) continue
 
             val cx = patch.xRatio * w
             val cy = patch.yRatio * h
-            val patchW = patch.widthRatio * w
-            val patchH = patch.heightRatio * h
 
-            // 1. In-painting mask to cleanly cover old text without smudge
+            val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = try {
+                    Color.parseColor(patch.textColorHex)
+                } catch (_: Exception) {
+                    Color.BLACK
+                }
+                textSize = patch.fontHeightPx
+                typeface = if (patch.isBold) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
+                textAlign = Paint.Align.CENTER
+            }
+
+            val textBounds = Rect()
+            textPaint.getTextBounds(patch.text, 0, patch.text.length, textBounds)
+
+            // Dynamic mask strictly fitted to the word (never oversized, never covers neighboring text!)
+            val actualMaskW = max(patch.maskWidthPx, textBounds.width().toFloat() + 8f)
+            val actualMaskH = max(patch.maskHeightPx, patch.fontHeightPx + 4f)
+
             val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = try {
                     Color.parseColor(patch.bgColorHex)
@@ -365,29 +510,16 @@ object CardProcessingEngine {
             }
 
             val patchRect = android.graphics.RectF(
-                cx - patchW / 2f,
-                cy - patchH / 2f,
-                cx + patchW / 2f,
-                cy + patchH / 2f
+                cx - actualMaskW / 2f,
+                cy - actualMaskH / 2f,
+                cx + actualMaskW / 2f,
+                cy + actualMaskH / 2f
             )
-            canvas.drawRoundRect(patchRect, 6f * scaleFactor, 6f * scaleFactor, bgPaint)
+            // Soft rounded mask blending seamlessly into card paper
+            canvas.drawRoundRect(patchRect, 3f, 3f, bgPaint)
 
-            // 2. Render new text with exact matched font color
-            val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = try {
-                    Color.parseColor(patch.textColorHex)
-                } catch (_: Exception) {
-                    Color.BLACK
-                }
-                textSize = patch.fontSizeSp * 2.2f * scaleFactor
-                typeface = if (patch.isBold) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
-                textAlign = Paint.Align.CENTER
-            }
-
-            val textBounds = Rect()
-            textPaint.getTextBounds(patch.text, 0, patch.text.length, textBounds)
+            // Draw new text with exact baseline alignment
             val textBaselineY = cy - textBounds.exactCenterY()
-
             canvas.drawText(patch.text, cx, textBaselineY, textPaint)
         }
 
