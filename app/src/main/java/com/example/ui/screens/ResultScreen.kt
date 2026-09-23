@@ -7,8 +7,10 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -28,13 +31,13 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.EditNote
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.FormatColorText
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -72,6 +75,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -81,7 +85,7 @@ import androidx.compose.ui.unit.sp
 import com.example.engine.CardExporter
 import com.example.engine.CardProcessingEngine
 import com.example.model.CardAnalysis
-import com.example.model.EditableCardText
+import com.example.model.InPlaceTextPatch
 import com.example.ui.dialogs.ExportDialog
 import com.example.ui.theme.AccentCyan
 import com.example.ui.theme.AccentGreen
@@ -93,6 +97,7 @@ import com.example.ui.theme.DarkSurfaceVariant
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import kotlinx.coroutines.launch
+import kotlin.math.hypot
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -111,30 +116,25 @@ fun ResultScreen(
     var selectedTab by remember { mutableIntStateOf(0) }
     var showExportDialog by remember { mutableStateOf(false) }
     var showAdjusters by remember { mutableStateOf(false) }
-    var showTextEditor by remember { mutableStateOf(false) }
     var isSaving by remember { mutableStateOf(false) }
 
-    // Live adjustable parameters for fine positioning
+    // 1:1 Scale by default to eliminate any doubling/ghosting!
     var baseCompositeBitmap by remember(reconstructedBitmap) { mutableStateOf(reconstructedBitmap) }
-    var currentScale by remember { mutableFloatStateOf(0.96f) }
+    var currentScale by remember { mutableFloatStateOf(1.0f) }
     var currentOffsetX by remember { mutableFloatStateOf(0f) }
     var currentOffsetY by remember { mutableFloatStateOf(0f) }
 
-    // PDF-style In-Place Text Overlays (e.g. ZILZAL, phone corrections)
-    val textOverlayList = remember {
-        mutableStateListOf<EditableCardText>().apply {
-            addAll(CardProcessingEngine.getDefaultDetectedTexts())
-        }
+    // List of In-Place Text Patches created by directly tapping on the card
+    val inPlacePatches = remember { mutableStateListOf<InPlaceTextPatch>() }
+    var activeEditingPatch by remember { mutableStateOf<InPlaceTextPatch?>(null) }
+    var isCreatingNewPatch by remember { mutableStateOf(false) }
+
+    // Live rendered bitmap with seamless background in-painting + matched font text
+    val finalDisplayBitmap = remember(baseCompositeBitmap, inPlacePatches.toList()) {
+        CardProcessingEngine.renderCardWithInPlacePatches(baseCompositeBitmap, inPlacePatches)
     }
 
-    var editingTextItem by remember { mutableStateOf<EditableCardText?>(null) }
-
-    // Final rendered bitmap combining base composite + text edits
-    val finalDisplayBitmap = remember(baseCompositeBitmap, textOverlayList.map { it.text + it.isVisible + it.colorHex + it.fontSizeSp + it.xRatio + it.yRatio }) {
-        CardProcessingEngine.renderCardWithTextEdits(baseCompositeBitmap, textOverlayList)
-    }
-
-    val tabs = listOf("Reconstructed", "Extracted Layer", "Original Card", "Compare")
+    val tabs = listOf("Card Preview", "Extracted Layer", "Original Card", "Compare")
 
     fun recomputeBaseComposite() {
         val targetTmpl = templateBitmap ?: CardProcessingEngine.createDefaultBlankTemplate(
@@ -162,78 +162,121 @@ fun ResultScreen(
         )
     }
 
-    // Modal Dialog to edit a specific text item
-    editingTextItem?.let { currentItem ->
-        var tempText by remember { mutableStateOf(currentItem.text) }
-        var tempSize by remember { mutableFloatStateOf(currentItem.fontSizeSp) }
-        var tempColor by remember { mutableStateOf(currentItem.colorHex) }
-        var tempX by remember { mutableFloatStateOf(currentItem.xRatio) }
-        var tempY by remember { mutableFloatStateOf(currentItem.yRatio) }
+    // Interactive In-Place Edit Dialog: Opened by tapping directly on the card
+    activeEditingPatch?.let { currentPatch ->
+        var tempText by remember { mutableStateOf(currentPatch.text) }
+        var tempFontSize by remember { mutableFloatStateOf(currentPatch.fontSizeSp) }
+        var tempColorHex by remember { mutableStateOf(currentPatch.textColorHex) }
+        var tempWidthRatio by remember { mutableFloatStateOf(currentPatch.widthRatio) }
+        var tempHeightRatio by remember { mutableFloatStateOf(currentPatch.heightRatio) }
+        var tempIsBold by remember { mutableStateOf(currentPatch.isBold) }
 
         AlertDialog(
-            onDismissRequest = { editingTextItem = null },
+            onDismissRequest = {
+                activeEditingPatch = null
+                isCreatingNewPatch = false
+            },
             title = {
-                Text(text = "Edit Card Text", fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.TouchApp, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(22.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = "Tap-to-Edit Card Text", fontWeight = FontWeight.Bold)
+                }
             },
             text = {
                 Column(
                     modifier = Modifier.verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        text = "Notice: ভুল বানান মুছে সঠিক বানান দিন (যেমন: ZILZAL)।",
+                        text = "Notice: কার্ডের আগের লেখা (তারিখ, নাম বা নম্বর) মুছে নতুন লেখা বসবে। কার্ডের ফন্ট ও রঙের সাথে মিলিয়ে নিখুঁতভাবে তৈরি হবে।",
                         fontSize = 11.sp,
-                        color = AccentCyan
+                        color = AccentCyan,
+                        lineHeight = 16.sp
                     )
 
                     OutlinedTextField(
                         value = tempText,
                         onValueChange = { tempText = it },
-                        label = { Text("Text Content") },
+                        label = { Text("Enter New Text (নতুন লেখা)") },
+                        placeholder = { Text("e.g. নতুন তারিখ, নাম বা নম্বর") },
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    Text("Font Size: ${tempSize.toInt()} sp", fontSize = 11.sp, color = TextSecondary)
+                    // Font Size Slider
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Font Size", fontSize = 12.sp, color = TextSecondary)
+                        Text("${tempFontSize.toInt()} sp", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = AccentCyan)
+                    }
                     Slider(
-                        value = tempSize,
-                        onValueChange = { tempSize = it },
-                        valueRange = 12f..48f,
+                        value = tempFontSize,
+                        onValueChange = { tempFontSize = it },
+                        valueRange = 10f..44f,
                         colors = SliderDefaults.colors(thumbColor = AccentCyan, activeTrackColor = AccentCyan)
                     )
 
-                    Text("Position (X - Horizontal): ${(tempX * 100).toInt()}%", fontSize = 11.sp, color = TextSecondary)
-                    Slider(
-                        value = tempX,
-                        onValueChange = { tempX = it },
-                        valueRange = 0.05f..0.95f
-                    )
-
-                    Text("Position (Y - Vertical): ${(tempY * 100).toInt()}%", fontSize = 11.sp, color = TextSecondary)
-                    Slider(
-                        value = tempY,
-                        onValueChange = { tempY = it },
-                        valueRange = 0.05f..0.95f
-                    )
-
-                    Text("Color Preset:", fontSize = 11.sp, color = TextSecondary)
+                    // Mask Coverage Width
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Erase Box Width", fontSize = 12.sp, color = TextSecondary)
+                        Text("${(tempWidthRatio * 100).toInt()}%", fontSize = 12.sp, color = TextSecondary)
+                    }
+                    Slider(
+                        value = tempWidthRatio,
+                        onValueChange = { tempWidthRatio = it },
+                        valueRange = 0.08f..0.70f
+                    )
+
+                    // Matched Color Palette
+                    Text("Font Color (স্বয়ংক্রিয় কালার ম্যাচ):", fontSize = 12.sp, color = TextSecondary)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        val colorPresets = listOf("#0F172A", "#DC2626", "#2563EB", "#059669", "#D97706")
+                        // Include sampled color as first option
+                        val colorPresets = listOf(
+                            currentPatch.textColorHex,
+                            "#0F172A", // Deep Navy Black
+                            "#DC2626", // Bengali Card Bold Red
+                            "#2563EB", // Royal Blue
+                            "#059669", // Emerald Green
+                            "#D97706"  // Gold / Bronze
+                        ).distinct()
+
                         colorPresets.forEach { hex ->
                             Box(
                                 modifier = Modifier
-                                    .size(28.dp)
+                                    .size(30.dp)
                                     .clip(CircleShape)
                                     .background(Color(android.graphics.Color.parseColor(hex)))
                                     .border(
-                                        width = if (tempColor == hex) 2.5.dp else 1.dp,
-                                        color = if (tempColor == hex) Color.White else Color.Transparent,
+                                        width = if (tempColorHex.equals(hex, ignoreCase = true)) 2.5.dp else 1.dp,
+                                        color = if (tempColorHex.equals(hex, ignoreCase = true)) Color.White else Color.Transparent,
                                         shape = CircleShape
                                     )
-                                    .clickable { tempColor = hex }
+                                    .clickable { tempColorHex = hex }
                             )
+                        }
+                    }
+
+                    // Bold / Regular Toggle
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Bold Font", fontSize = 12.sp, color = TextSecondary)
+                        OutlinedButton(
+                            onClick = { tempIsBold = !tempIsBold }
+                        ) {
+                            Text(if (tempIsBold) "Bold (বোল্ড)" else "Regular (নরমাল)", fontSize = 11.sp)
                         }
                     }
                 }
@@ -241,26 +284,37 @@ fun ResultScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        val idx = textOverlayList.indexOfFirst { it.id == currentItem.id }
-                        if (idx >= 0) {
-                            textOverlayList[idx] = currentItem.copy(
-                                text = tempText,
-                                fontSizeSp = tempSize,
-                                colorHex = tempColor,
-                                xRatio = tempX,
-                                yRatio = tempY,
-                                isVisible = true
-                            )
+                        val updated = currentPatch.copy(
+                            text = tempText,
+                            fontSizeSp = tempFontSize,
+                            textColorHex = tempColorHex,
+                            widthRatio = tempWidthRatio,
+                            heightRatio = tempHeightRatio,
+                            isBold = tempIsBold
+                        )
+                        if (isCreatingNewPatch) {
+                            inPlacePatches.add(updated)
+                        } else {
+                            val idx = inPlacePatches.indexOfFirst { it.id == currentPatch.id }
+                            if (idx >= 0) {
+                                inPlacePatches[idx] = updated
+                            }
                         }
-                        editingTextItem = null
+                        activeEditingPatch = null
+                        isCreatingNewPatch = false
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = AccentPrimary)
                 ) {
-                    Text("Apply Changes")
+                    Text("Apply & Replace Text")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { editingTextItem = null }) {
+                TextButton(
+                    onClick = {
+                        activeEditingPatch = null
+                        isCreatingNewPatch = false
+                    }
+                ) {
                     Text("Cancel")
                 }
             }
@@ -278,7 +332,7 @@ fun ResultScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "${finalDisplayBitmap.width} × ${finalDisplayBitmap.height} px • ${analysis.orientation}",
+                            text = "${finalDisplayBitmap.width} × ${finalDisplayBitmap.height} px • 1:1 Pixel Match",
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary,
                             fontSize = 11.sp
@@ -294,26 +348,13 @@ fun ResultScreen(
                     }
                 },
                 actions = {
-                    // PDF In-Place Text Editor Button
-                    IconButton(
-                        onClick = { showTextEditor = !showTextEditor },
-                        modifier = Modifier.testTag("result_text_editor_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.EditNote,
-                            contentDescription = "Text Editor",
-                            tint = if (showTextEditor) AccentCyan else TextSecondary
-                        )
-                    }
-
-                    // Positioning Adjusters Button
                     IconButton(
                         onClick = { showAdjusters = !showAdjusters },
                         modifier = Modifier.testTag("result_adjust_button")
                     ) {
                         Icon(
                             imageVector = Icons.Default.Tune,
-                            contentDescription = "Adjust",
+                            contentDescription = "Fine-Tune Layout",
                             tint = if (showAdjusters) AccentCyan else TextSecondary
                         )
                     }
@@ -372,133 +413,7 @@ fun ResultScreen(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                // PDF-Style In-Place Text Editor Panel
-                AnimatedVisibility(visible = showTextEditor) {
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = DarkSurfaceVariant),
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.EditNote, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(20.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "PDF Text Editor",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = AccentCyan
-                                    )
-                                }
-                                FilledTonalButton(
-                                    onClick = {
-                                        val newText = EditableCardText(
-                                            label = "New Label",
-                                            text = "New Text",
-                                            xRatio = 0.5f,
-                                            yRatio = 0.5f,
-                                            isVisible = true
-                                        )
-                                        textOverlayList.add(newText)
-                                        editingTextItem = newText
-                                    }
-                                ) {
-                                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Add Text", fontSize = 11.sp)
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "Notice: যেকোনো লেখার ওপর ট্যাপ করে বানান বা নম্বর ঠিক করুন (যেমন: ZILZAL)।",
-                                fontSize = 11.sp,
-                                color = TextSecondary
-                            )
-
-                            Spacer(modifier = Modifier.height(10.dp))
-
-                            // List of text overlay items
-                            textOverlayList.forEachIndexed { index, item ->
-                                Surface(
-                                    color = DarkSurface,
-                                    shape = RoundedCornerShape(10.dp),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 4.dp)
-                                        .clickable { editingTextItem = item }
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = item.label,
-                                                fontSize = 11.sp,
-                                                color = AccentCyan,
-                                                fontWeight = FontWeight.Medium
-                                            )
-                                            Text(
-                                                text = item.text,
-                                                fontSize = 13.sp,
-                                                color = TextPrimary,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            IconButton(
-                                                onClick = {
-                                                    textOverlayList[index] = item.copy(isVisible = !item.isVisible)
-                                                }
-                                            ) {
-                                                Icon(
-                                                    imageVector = if (item.isVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                                    contentDescription = "Toggle Visibility",
-                                                    tint = if (item.isVisible) AccentGreen else TextSecondary,
-                                                    modifier = Modifier.size(20.dp)
-                                                )
-                                            }
-
-                                            IconButton(
-                                                onClick = { editingTextItem = item }
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.EditNote,
-                                                    contentDescription = "Edit Text",
-                                                    tint = AccentCyan,
-                                                    modifier = Modifier.size(20.dp)
-                                                )
-                                            }
-
-                                            if (index >= 3) {
-                                                IconButton(
-                                                    onClick = { textOverlayList.removeAt(index) }
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Delete,
-                                                        contentDescription = "Delete",
-                                                        tint = Color.Red.copy(alpha = 0.8f),
-                                                        modifier = Modifier.size(18.dp)
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Interactive Position & Size Fine-Tuning Panel
+                // Interactive Position Fine-Tuning Panel
                 AnimatedVisibility(visible = showAdjusters) {
                     Card(
                         colors = CardDefaults.cardColors(containerColor = DarkSurfaceVariant),
@@ -512,20 +427,20 @@ fun ResultScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "Layout & Scale Adjustments",
+                                    text = "Fine Alignment (1:1 Pixel Match)",
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = AccentCyan
                                 )
                                 OutlinedButton(
                                     onClick = {
-                                        currentScale = 0.96f
+                                        currentScale = 1.0f
                                         currentOffsetX = 0f
                                         currentOffsetY = 0f
                                         recomputeBaseComposite()
                                     }
                                 ) {
-                                    Text("Reset", fontSize = 11.sp)
+                                    Text("Reset 1:1", fontSize = 11.sp)
                                 }
                             }
 
@@ -538,7 +453,7 @@ fun ResultScreen(
                                     currentScale = it
                                     recomputeBaseComposite()
                                 },
-                                valueRange = 0.70f..1.30f,
+                                valueRange = 0.80f..1.20f,
                                 colors = SliderDefaults.colors(thumbColor = AccentCyan, activeTrackColor = AccentCyan)
                             )
 
@@ -549,7 +464,7 @@ fun ResultScreen(
                                     currentOffsetY = it
                                     recomputeBaseComposite()
                                 },
-                                valueRange = -150f..150f,
+                                valueRange = -100f..100f,
                                 colors = SliderDefaults.colors(thumbColor = AccentPrimary, activeTrackColor = AccentPrimary)
                             )
 
@@ -560,7 +475,7 @@ fun ResultScreen(
                                     currentOffsetX = it
                                     recomputeBaseComposite()
                                 },
-                                valueRange = -150f..150f,
+                                valueRange = -100f..100f,
                                 colors = SliderDefaults.colors(thumbColor = AccentPrimary, activeTrackColor = AccentPrimary)
                             )
                         }
@@ -569,7 +484,9 @@ fun ResultScreen(
 
                 when (selectedTab) {
                     0 -> {
-                        // Reconstructed New Card
+                        // ====================================================
+                        // INTERACTIVE RECONSTRUCTED CARD (DIRECT TAP-TO-EDIT)
+                        // ====================================================
                         Card(
                             colors = CardDefaults.cardColors(containerColor = DarkSurface),
                             shape = RoundedCornerShape(16.dp),
@@ -581,15 +498,19 @@ fun ResultScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        text = "Target Reconstructed Card",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = TextPrimary
-                                    )
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.TouchApp, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(18.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "Tap on any text to edit",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = TextPrimary
+                                        )
+                                    }
                                     Surface(color = AccentGreen.copy(alpha = 0.15f), shape = RoundedCornerShape(8.dp)) {
                                         Text(
-                                            text = "Smart Diff Fit",
+                                            text = "Zero Doubling",
                                             color = AccentGreen,
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 11.sp,
@@ -598,55 +519,179 @@ fun ResultScreen(
                                     }
                                 }
 
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Notice: কার্ডের যেকোনো লেখার ওপর সরাসরি আঙুল দিয়ে টাচ করুন (যেমন: তারিখ, মোবাইল নম্বর বা নাম)—কার্ডের ফন্ট ও কালারের সাথে হুবহু মিলিয়ে লেখাটি পরিবর্তন হবে।",
+                                    color = TextSecondary,
+                                    fontSize = 11.sp,
+                                    lineHeight = 16.sp
+                                )
+
                                 Spacer(modifier = Modifier.height(12.dp))
 
                                 val imageBitmap = remember(finalDisplayBitmap) { finalDisplayBitmap.asImageBitmap() }
                                 val aspect = finalDisplayBitmap.width.toFloat() / finalDisplayBitmap.height.toFloat()
 
-                                Box(
+                                BoxWithConstraints(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clip(RoundedCornerShape(12.dp))
                                         .background(Color.Black)
-                                        .border(1.dp, DarkBorder, RoundedCornerShape(12.dp)),
+                                        .border(1.5.dp, DarkBorder, RoundedCornerShape(12.dp)),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Image(
-                                        bitmap = imageBitmap,
-                                        contentDescription = "New Card",
-                                        contentScale = ContentScale.Fit,
+                                    val containerWidthPx = constraints.maxWidth.toFloat()
+                                    val containerHeightPx = containerWidthPx / aspect
+
+                                    Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .aspectRatio(aspect.coerceIn(0.5f, 2.5f))
-                                    )
+                                            .pointerInput(finalDisplayBitmap) {
+                                                detectTapGestures { offset ->
+                                                    val tapXRatio = (offset.x / size.width).coerceIn(0.02f, 0.98f)
+                                                    val tapYRatio = (offset.y / size.height).coerceIn(0.02f, 0.98f)
+
+                                                    // Check if tap hit an existing patch
+                                                    val existing = inPlacePatches.find { patch ->
+                                                        val dist = hypot(patch.xRatio - tapXRatio, patch.yRatio - tapYRatio)
+                                                        dist < 0.08f
+                                                    }
+
+                                                    if (existing != null) {
+                                                        isCreatingNewPatch = false
+                                                        activeEditingPatch = existing
+                                                    } else {
+                                                        // Sample color around the tap
+                                                        val (textHex, bgHex) = CardProcessingEngine.sampleTextAndBackgroundColors(
+                                                            finalDisplayBitmap,
+                                                            tapXRatio,
+                                                            tapYRatio
+                                                        )
+
+                                                        val newPatch = InPlaceTextPatch(
+                                                            text = "",
+                                                            xRatio = tapXRatio,
+                                                            yRatio = tapYRatio,
+                                                            widthRatio = 0.28f,
+                                                            heightRatio = 0.07f,
+                                                            fontSizeSp = 18f,
+                                                            textColorHex = textHex,
+                                                            bgColorHex = bgHex,
+                                                            isBold = true
+                                                        )
+                                                        isCreatingNewPatch = true
+                                                        activeEditingPatch = newPatch
+                                                    }
+                                                }
+                                            }
+                                    ) {
+                                        Image(
+                                            bitmap = imageBitmap,
+                                            contentDescription = "New Reconstructed Card",
+                                            contentScale = ContentScale.Fit,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+
+                                        // Subtle indicators on active edited areas
+                                        inPlacePatches.forEach { patch ->
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                            ) {
+                                                val posX = (patch.xRatio * containerWidthPx) - 16.dp.value
+                                                val posY = (patch.yRatio * containerHeightPx) - 16.dp.value
+
+                                                Box(
+                                                    modifier = Modifier
+                                                        .offset(x = posX.dp, y = posY.dp)
+                                                        .size(32.dp)
+                                                        .clip(CircleShape)
+                                                        .background(AccentCyan.copy(alpha = 0.25f))
+                                                        .border(1.dp, AccentCyan, CircleShape)
+                                                        .clickable {
+                                                            isCreatingNewPatch = false
+                                                            activeEditingPatch = patch
+                                                        },
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Edit,
+                                                        contentDescription = null,
+                                                        tint = Color.White,
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
 
                                 Spacer(modifier = Modifier.height(10.dp))
 
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Icon(Icons.Default.Info, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
+                                // Active edits summary list
+                                if (inPlacePatches.isNotEmpty()) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                         Text(
-                                            text = "Notice: ২য় কার্ডে যে ডিজাইন আগে থেকেই ছিল তা ডাবল হয়নি, শুধু নতুন লেখা ও উপাদান যুক্ত হয়েছে।",
-                                            color = TextSecondary,
-                                            fontSize = 11.sp
+                                            text = "Active Text Edits (${inPlacePatches.size}):",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = AccentCyan
                                         )
-                                    }
 
-                                    FilledTonalButton(
-                                        onClick = { showTextEditor = true }
-                                    ) {
-                                        Icon(Icons.Default.EditNote, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Edit Text", fontSize = 11.sp)
+                                        inPlacePatches.forEachIndexed { index, patch ->
+                                            Surface(
+                                                color = DarkSurfaceVariant,
+                                                shape = RoundedCornerShape(8.dp),
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        modifier = Modifier.weight(1f)
+                                                    ) {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .size(12.dp)
+                                                                .clip(CircleShape)
+                                                                .background(Color(android.graphics.Color.parseColor(patch.textColorHex)))
+                                                        )
+                                                        Spacer(modifier = Modifier.width(8.dp))
+                                                        Text(
+                                                            text = patch.text.ifBlank { "Untitled Edit" },
+                                                            fontSize = 12.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = TextPrimary
+                                                        )
+                                                    }
+
+                                                    Row {
+                                                        IconButton(
+                                                            onClick = {
+                                                                isCreatingNewPatch = false
+                                                                activeEditingPatch = patch
+                                                            },
+                                                            modifier = Modifier.size(28.dp)
+                                                        ) {
+                                                            Icon(Icons.Default.Edit, contentDescription = "Edit", tint = AccentCyan, modifier = Modifier.size(16.dp))
+                                                        }
+
+                                                        IconButton(
+                                                            onClick = { inPlacePatches.removeAt(index) },
+                                                            modifier = Modifier.size(28.dp)
+                                                        ) {
+                                                            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red.copy(alpha = 0.8f), modifier = Modifier.size(16.dp))
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -668,14 +713,14 @@ fun ResultScreen(
                         ) {
                             Column(modifier = Modifier.padding(14.dp)) {
                                 Text(
-                                    text = "Extracted Layer (Transparent PNG)",
+                                    text = "Extracted Foreground (Smart Subtracted)",
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = AccentCyan
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = "Notice: মূল কার্ডের ব্যাকগ্রাউন্ড ফিল্টার করে সমস্ত লেখা ও লোগো আলাদা করা হয়েছে।",
+                                    text = "Notice: ২য় কার্ডে যে ডিজাইন আগে থেকেই ছিল তা বাদ দিয়ে শুধুমাত্র অনুপস্থিত লেখা ও ছবিগুলো আলাদা করা হয়েছে।",
                                     color = TextSecondary,
                                     fontSize = 11.sp
                                 )
@@ -768,7 +813,7 @@ fun ResultScreen(
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Column(modifier = Modifier.padding(12.dp)) {
-                                    Text("Target Reconstructed Card", fontWeight = FontWeight.Bold, color = AccentCyan, fontSize = 12.sp)
+                                    Text("Reconstructed Card (With In-Place Edits)", fontWeight = FontWeight.Bold, color = AccentCyan, fontSize = 12.sp)
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Image(
                                         bitmap = remember(finalDisplayBitmap) { finalDisplayBitmap.asImageBitmap() },
@@ -812,7 +857,7 @@ fun ResultScreen(
                                     val result = CardExporter.saveToGallery(
                                         context = context,
                                         bitmap = finalDisplayBitmap,
-                                        filename = "Card_Clone_HD_${System.currentTimeMillis()}",
+                                        filename = "Card_Clone_Seamless_${System.currentTimeMillis()}",
                                         format = "PNG",
                                         quality = 100
                                     )

@@ -44,18 +44,21 @@ data class VisualLayer(
 )
 
 /**
- * In-place editable text element on the card (PDF-style click to edit).
+ * In-place editable text patch directly tapped on the card.
+ * Seamlessly covers the old text using sampled background color and renders
+ * the new text matching the card's original color, font size, and style.
  */
-data class EditableCardText(
+data class InPlaceTextPatch(
     val id: String = java.util.UUID.randomUUID().toString(),
-    val label: String = "Text",
     val text: String,
-    val xRatio: Float = 0.5f,
-    val yRatio: Float = 0.5f,
-    val fontSizeSp: Float = 22f,
-    val colorHex: String = "#0F172A",
-    val isBold: Boolean = true,
-    val isVisible: Boolean = true
+    val xRatio: Float, // Center X ratio (0.0 to 1.0)
+    val yRatio: Float, // Center Y ratio (0.0 to 1.0)
+    val widthRatio: Float = 0.28f, // Background mask width
+    val heightRatio: Float = 0.07f, // Background mask height
+    val fontSizeSp: Float = 17f,
+    val textColorHex: String = "#0F172A",
+    val bgColorHex: String = "#FFFFFF",
+    val isBold: Boolean = true
 )
 
 /**

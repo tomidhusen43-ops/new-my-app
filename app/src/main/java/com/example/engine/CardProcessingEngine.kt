@@ -282,15 +282,63 @@ object CardProcessingEngine {
         return output
     }
 
+
     /**
-     * Renders user text edits (PDF-style in-place editing) on top of the card.
+     * Samples local text color and background color around a user's tap point.
+     * Ensures newly typed text matches the card's exact original font color and background.
      */
-    fun renderCardWithTextEdits(
+    fun sampleTextAndBackgroundColors(
+        bitmap: Bitmap,
+        tapXRatio: Float,
+        tapYRatio: Float
+    ): Pair<String, String> {
+        val w = bitmap.width
+        val h = bitmap.height
+        val cx = (tapXRatio * w).toInt().coerceIn(0, w - 1)
+        val cy = (tapYRatio * h).toInt().coerceIn(0, h - 1)
+
+        val radius = max(8, (min(w, h) * 0.03f).toInt())
+        var minLum = 255f
+        var maxLum = 0f
+        var darkColor = Color.BLACK
+        var lightColor = Color.WHITE
+
+        for (dy in -radius..radius) {
+            val y = (cy + dy).coerceIn(0, h - 1)
+            for (dx in -radius..radius) {
+                val x = (cx + dx).coerceIn(0, w - 1)
+                val pixel = bitmap.getPixel(x, y)
+                val r = (pixel shr 16) and 0xFF
+                val g = (pixel shr 8) and 0xFF
+                val b = pixel and 0xFF
+                val lum = 0.299f * r + 0.587f * g + 0.114f * b
+
+                if (lum < minLum) {
+                    minLum = lum
+                    darkColor = pixel
+                }
+                if (lum > maxLum) {
+                    maxLum = lum
+                    lightColor = pixel
+                }
+            }
+        }
+
+        val textHex = String.format("#%06X", 0xFFFFFF and darkColor)
+        val bgHex = String.format("#%06X", 0xFFFFFF and lightColor)
+        return Pair(textHex, bgHex)
+    }
+
+    /**
+     * Seamlessly renders In-Place Text Patches.
+     * Softly patches the old text with the card's background color so it leaves no trace,
+     * and renders the new text with the exact matched card font color and style!
+     */
+    fun renderCardWithInPlacePatches(
         baseBitmap: Bitmap,
-        textList: List<com.example.model.EditableCardText>
+        patches: List<com.example.model.InPlaceTextPatch>
     ): Bitmap {
-        val activeTexts = textList.filter { it.isVisible && it.text.isNotBlank() }
-        if (activeTexts.isEmpty()) return baseBitmap
+        if (patches.isEmpty()) return baseBitmap
 
         val result = baseBitmap.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(result)
@@ -298,89 +346,62 @@ object CardProcessingEngine {
         val h = result.height.toFloat()
         val scaleFactor = h / 700f
 
-        for (item in activeTexts) {
-            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        for (patch in patches) {
+            if (patch.text.isBlank()) continue
+
+            val cx = patch.xRatio * w
+            val cy = patch.yRatio * h
+            val patchW = patch.widthRatio * w
+            val patchH = patch.heightRatio * h
+
+            // 1. In-painting mask to cleanly cover old text without smudge
+            val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = try {
-                    Color.parseColor(item.colorHex)
+                    Color.parseColor(patch.bgColorHex)
+                } catch (_: Exception) {
+                    Color.WHITE
+                }
+                style = Paint.Style.FILL
+            }
+
+            val patchRect = android.graphics.RectF(
+                cx - patchW / 2f,
+                cy - patchH / 2f,
+                cx + patchW / 2f,
+                cy + patchH / 2f
+            )
+            canvas.drawRoundRect(patchRect, 6f * scaleFactor, 6f * scaleFactor, bgPaint)
+
+            // 2. Render new text with exact matched font color
+            val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = try {
+                    Color.parseColor(patch.textColorHex)
                 } catch (_: Exception) {
                     Color.BLACK
                 }
-                textSize = item.fontSizeSp * 2.2f * scaleFactor
-                typeface = if (item.isBold) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
+                textSize = patch.fontSizeSp * 2.2f * scaleFactor
+                typeface = if (patch.isBold) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
                 textAlign = Paint.Align.CENTER
             }
 
             val textBounds = Rect()
-            paint.getTextBounds(item.text, 0, item.text.length, textBounds)
-            val posX = item.xRatio * w
-            val posY = item.yRatio * h
+            textPaint.getTextBounds(patch.text, 0, patch.text.length, textBounds)
+            val textBaselineY = cy - textBounds.exactCenterY()
 
-            val padX = 16f * scaleFactor
-            val padY = 8f * scaleFactor
-            val maskPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.WHITE
-                style = Paint.Style.FILL
-            }
-
-            val bgRect = android.graphics.RectF(
-                posX + textBounds.left - padX,
-                posY + textBounds.top - padY,
-                posX + textBounds.right + padX,
-                posY + textBounds.bottom + padY
-            )
-            canvas.drawRoundRect(bgRect, 8f * scaleFactor, 8f * scaleFactor, maskPaint)
-            canvas.drawText(item.text, posX, posY, paint)
+            canvas.drawText(patch.text, cx, textBaselineY, textPaint)
         }
 
         return result
     }
 
-    fun getDefaultDetectedTexts(): List<com.example.model.EditableCardText> {
-        return listOf(
-            com.example.model.EditableCardText(
-                id = "title_text",
-                label = "Title / Brand Name (যেমন: ZILZAL)",
-                text = "ZILZAL",
-                xRatio = 0.50f,
-                yRatio = 0.40f,
-                fontSizeSp = 26f,
-                colorHex = "#DC2626",
-                isBold = true,
-                isVisible = false
-            ),
-            com.example.model.EditableCardText(
-                id = "name_text",
-                label = "Proprietor / Name (পরিচালনায়)",
-                text = "মোঃ শাহীন খান",
-                xRatio = 0.28f,
-                yRatio = 0.16f,
-                fontSizeSp = 17f,
-                colorHex = "#1E293B",
-                isBold = true,
-                isVisible = false
-            ),
-            com.example.model.EditableCardText(
-                id = "phone_text",
-                label = "Phone / Mobile Number",
-                text = "০১...",
-                xRatio = 0.78f,
-                yRatio = 0.16f,
-                fontSizeSp = 16f,
-                colorHex = "#0F172A",
-                isBold = true,
-                isVisible = false
-            )
-        )
-    }
-
     /**
      * Composites the extracted foreground (text, logos, photos) onto the blank template card.
-     * Supports interactive scale, offsetX, and offsetY for fine adjustment.
+     * Default scale is 1.0f to guarantee 1:1 pixel alignment and zero doubling.
      */
     fun compositeOntoTemplate(
         templateBitmap: Bitmap,
         foregroundBitmap: Bitmap,
-        scaleMultiplier: Float = 0.96f,
+        scaleMultiplier: Float = 1.0f,
         offsetX: Float = 0f,
         offsetY: Float = 0f
     ): Bitmap {
@@ -394,11 +415,10 @@ object CardProcessingEngine {
         val basePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
         canvas.drawBitmap(templateBitmap, 0f, 0f, basePaint)
 
-        // 2. Scale & place foreground
+        // 2. Scale & place foreground with 1:1 default alignment
         val fgW = foregroundBitmap.width.toFloat()
         val fgH = foregroundBitmap.height.toFloat()
 
-        // Fit within target bounds with padding
         val scaleFitX = targetW.toFloat() / fgW
         val scaleFitY = targetH.toFloat() / fgH
         val baseScale = min(scaleFitX, scaleFitY) * scaleMultiplier
@@ -479,7 +499,7 @@ object CardProcessingEngine {
         sourcePrepared: PreparedImage,
         templateBitmap: Bitmap?,
         manualCorners: CardCorners? = null,
-        scale: Float = 0.96f,
+        scale: Float = 1.0f,
         offsetX: Float = 0f,
         offsetY: Float = 0f
     ): Triple<CardAnalysis, Bitmap, Bitmap> = withContext(Dispatchers.Default) {
